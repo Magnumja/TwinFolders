@@ -445,21 +445,30 @@ pub fn listener_is_ours(cfg: &ServiceConfig) -> bool {
         }
         Some(Os::Windows) => {
             let script = format!(
-                "$c = Get-NetTCPConnection -LocalPort {} -State Listen -ErrorAction SilentlyContinue; if (-not $c) {{ exit 1 }}; $c.OwningProcess | Sort-Object -Unique | ForEach-Object {{ (Get-Process -Id $_).Path }}",
+                // Win32_Process.GetOwner works without elevation (unlike
+                // Get-Process -IncludeUserName). One line per PID: path|DOMAIN\user
+                "$c = Get-NetTCPConnection -LocalPort {} -State Listen -ErrorAction SilentlyContinue; if (-not $c) {{ exit 1 }}; $c.OwningProcess | Sort-Object -Unique | ForEach-Object {{ $p = Get-CimInstance Win32_Process -Filter \"ProcessId=$_\"; $o = Invoke-CimMethod -InputObject $p -MethodName GetOwner; \"$($p.ExecutablePath)|$($o.Domain)\\$($o.User)\" }}",
                 cfg.gui_port
             );
             let Ok(out) = powershell(&script) else {
                 return false;
             };
-            let paths: Vec<&str> = out
+            let Ok(me) = windows_user() else {
+                return false;
+            };
+            let rows: Vec<&str> = out
                 .lines()
                 .map(str::trim)
                 .filter(|l| !l.is_empty())
                 .collect();
-            !paths.is_empty()
-                && paths
-                    .iter()
-                    .all(|p| same_bin(Path::new(p), &cfg.syncthing_bin))
+            !rows.is_empty()
+                && rows.iter().all(|r| match r.rsplit_once('|') {
+                    Some((path, owner)) => {
+                        owner.eq_ignore_ascii_case(&me)
+                            && same_bin(Path::new(path), &cfg.syncthing_bin)
+                    }
+                    None => false,
+                })
         }
         None => false,
     }
