@@ -60,6 +60,8 @@ jobs:
           if [ "${{ matrix.ext }}" = "zip" ]; then unzip -q "${name}.zip"; else tar xzf "${name}.tar.gz"; fi
           bin="$PWD/${name}/syncthing"; [ -f "$bin.exe" ] && bin="$bin.exe"
           "$bin" --version
+          # Rust on Windows needs a native path (C:\...), not bash's /d/a/...
+          if command -v cygpath >/dev/null; then bin=$(cygpath -w "$bin"); fi
           echo "TWINFOLDERS_SYNCTHING=$bin" >> "$GITHUB_ENV"
 
       - name: fmt
