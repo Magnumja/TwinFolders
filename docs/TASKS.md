@@ -46,9 +46,9 @@ Legenda: 🤖 roda em agente paralelo · 🔎 verificar docs oficiais antes · �
 ## Fatia 5 — Conflitos e versionamento
 | # | Tarefa | Evidência |
 |---|---|---|
-| 5.1 | Lista de conflitos + notificação nativa | screenshot |
-| 5.2 | Manter minha / outra / ambas (descartado → versões). **Executor deve canonicalizar cada caminho do plano e recusar se sair da raiz da pasta** (achado da revisão de segurança) | unit + integração |
-| 5.3 | Config de versionamento (staggered/trashcan + retenção) | teste integração |
+| ✅ 5.1 | Lista de conflitos + notificação nativa (busca a cada 60 s, uma notificação por conflito; status no topo vira "N conflitos para resolver") | `docs/screenshot-conflicts.jpg`; notificação real: 🖐 confirmar no Mac, ☐ Windows |
+| ✅ 5.2 | Manter minha / outra / ambas (descartado → versões). **Executor deve canonicalizar cada caminho do plano e recusar se sair da raiz da pasta** (achado da revisão de segurança) → `core/src/resolve.rs`: rename sem sobrescrever (`renamex_np`/`renameat2`/`MoveFileExW`), sem seguir symlinks, só arquivos regulares, desfaz passos em caso de falha | 13 unit + integração 2 nós (conflito resolvido converge nos dois lados) |
+| ✅ 5.3 | Config de versionamento (escalonado/últimas N/lixeira/desligado + retenção). `maxAge` confirmado em **segundos** no código-fonte do Syncthing | `core/tests/versioning.rs`: ida e volta na API real + Syncthing lista a cópia arquivada pelo executor como versão; `docs/screenshot-versioning.jpg` |
 
 ## Fatia 6 — SSH via Tailscale
 | # | Tarefa | Evidência |
@@ -76,9 +76,20 @@ Legenda: 🤖 roda em agente paralelo · 🔎 verificar docs oficiais antes · �
 | Código #4 | Após reinício do daemon os IDs de evento recomeçam → o app reconecta e recomeça do evento 0 ao perder a conexão | ✅ 4.2 |
 | Código #5 | Distinguir `Timeout` de `Connect` em escritas (resultado indeterminado) → `Error::Timeout` | ✅ 4.3 |
 | Código #7 | `(?i)` nos padrões: **não é preciso** — o Syncthing aplica `(?i)` sozinho em sistemas de arquivos que ignoram maiúsculas (Mac/Windows), visto na API real | ✅ 4.3 |
-| Segurança #1 | Executor de conflitos: rename sem sobrescrever (`RENAME_NOREPLACE`/`MoveFileEx` sem replace), não seguir symlinks, KeepBoth com nome único | 5.2 |
+| Segurança #1 | Executor de conflitos: rename sem sobrescrever (`RENAME_NOREPLACE`/`MoveFileEx` sem replace), não seguir symlinks, KeepBoth com nome único. Risco residual documentado: processo local trocando pasta por symlink entre a checagem e o rename | ✅ 5.2 |
 | Segurança #5 | Em produção passar a API key por `STGUIAPIKEY`/config.xml (0600), nunca por argv; config.xml guarda a key em texto puro | 3.3 |
 | Código #9/#10 | Robustez dos testes: portas (TOCTOU) e `wait_idle` logo após `scan` | contínuo |
+| Revisão segurança Fatia 5 — M1 | "Nunca apaga" podia falhar: o rename mantém o mtime antigo e a limpeza da lixeira/"últimas N" do Syncthing apagaria a cópia arquivada cedo → mtime da cópia arquivada passa a ser "agora" (teste) | ✅ |
+| Revisão segurança Fatia 5 — M2 | Falha ao desfazer passos era silenciosa → erro `RollbackFailed` lista onde cada arquivo ficou (sem teste automatizado: difícil injetar a falha) | ✅ |
+| Revisão segurança Fatia 5 — L1/L2 | Par pode fabricar uma "cópia de conflito"; rótulo da pasta vinha cru na notificação → texto passa a "possível conflito", tamanhos dos dois lados na tela, rótulo sem caracteres de controle/invisíveis e com no máx. 80 caracteres | ✅ |
+| Revisão segurança Fatia 5 — L3/L4/L5 | Nome curto 8.3 (`REPORT~1.TXT`) recusado no Windows; `~` usa `USERPROFILE` no Windows (como o Syncthing); `.stversions` ignorado sem diferenciar maiúsculas na busca | ✅ |
+| Auditoria de bugs (alta) | Modais perdiam o foco a cada 3 s (o polling recriava o `onClose` e o efeito do modal rodava de novo) → `onClose` em ref; teste de regressão falha no código antigo | ✅ |
+| Auditoria de bugs (média) | Cartão de conflito podia ficar desabilitado para sempre; respostas antigas de polling sobrescreviam as novas; aviso de "busca truncada" só aparecia com conflitos; picos de velocidade com atualizações quase simultâneas → `finally`, contador de sequência, aviso fora do bloco, snapshot serializado com intervalo mínimo de 1 s | ✅ |
+| Auditoria de bugs (baixa) | Campo numérico não deixava apagar; conclusão desconhecida virava "Sincronizando 0%"; notificação repetida após pasta pulada; erro do autostart sem tratamento; mutex envenenado derrubava tudo; busca de conflitos na UI a cada 30 s → 120 s (o backend avisa por evento) | ✅ |
+| Interface (pós-Fatia 5) | Painel como app pessoal: barra lateral, 4 telas, conexão animada com a velocidade real, abrir pasta no Finder/Explorer, pausar/retomar pasta, atalhos 1–4 / N / R. Sem rótulos em maiúsculas, sem fonte mono, sem faixa de números genérica | ✅ (verificado com dados simulados; app real 🖐) |
+| Didática | Faltava como colar o ID do outro computador no app (só dava para aprovar pedidos). Agora: guia em 4 passos guiado pelo estado real, formulário com ID validado (checksum Luhn do Syncthing) e endereço Tailscale opcional, pedido com o ID em blocos para conferir, tela “Como funciona” | ✅ (simulado; pareamento real entre 2 máquinas 🖐) |
+| Revisão de segurança (interface + pareamento) | Sem achados altos/críticos. Corrigido: abrir pasta exige caminho absoluto e canônico (nada vira opção do `open`/`explorer`) e não deixa processo zumbi; versionamento personalizado (ex.: `external`) nunca é sobrescrito pelo backend; CSP com `object-src`/`base-uri`/`frame-src`/`form-action 'none'`. A webview não tem permissão de notificação, shell, fs nem http | ✅ |
+| Fatia 5 (achado) | Harness de teste matava só o monitor do Syncthing e deixava o worker órfão → agora desliga via REST antes (`Node::stop`) | ✅ |
 | Segurança #4 | `cargo deny`/`cargo audit` no CI | 7.3 |
 | Fatia 3 (teste real) | Item do Keychain é atrelado ao binário que o criou: builds não assinados/atualizados fazem o macOS pedir permissão de novo → assinar/notarizar o app | 7.1 |
 | Fatia 3 (teste real) | Matar o monitor do Syncthing com kill -9 também encerra o worker e o launchd relança tudo (verificado); no Windows `Stop-ScheduledTask` pode deixar o worker vivo → uninstall já faz shutdown via REST antes | 🖐 Windows |

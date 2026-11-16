@@ -29,7 +29,7 @@ export function IgnoreEditor({ folder, onClose }: { folder: FolderView; onClose:
       const r = await invoke<Ignores>("set_ignores", { folderId: folder.id, text: text ?? "" });
       setError(r.error);
       setSaved(!r.error);
-      if (!r.error) toast("ok", `Exclusões de "${folder.label}" salvas e aplicadas.`);
+      if (!r.error) toast("ok", `Arquivos ignorados de "${folder.label}" salvos.`);
     } catch (e) {
       setError(String(e));
     } finally {
@@ -38,12 +38,17 @@ export function IgnoreEditor({ folder, onClose }: { folder: FolderView; onClose:
   };
 
   return (
-    <Modal title={`Exclusões — ${folder.label}`} onClose={onClose}>
+    <Modal title={`Arquivos ignorados em ${folder.label}`} onClose={onClose}>
       <div className="form">
-        <p className="muted small">
-          Um padrão por linha. Ex.: <code>*.tmp</code>, <code>Cache/</code>, <code>!importante.log</code> (exceção).
-          A primeira regra que combinar vale. Linhas com <code>//</code> são comentários.
+        <p className="modal-intro">
+          O que combinar com estas regras fica só neste computador: não vai para o outro nem é apagado lá.
         </p>
+        <ul className="rule-examples">
+          <li><code>*.tmp</code> ignora todo arquivo terminado em .tmp</li>
+          <li><code>Cache/</code> ignora a pasta Cache inteira</li>
+          <li><code>!importante.log</code> abre uma exceção para esse arquivo</li>
+          <li>Uma regra por linha. A primeira que combinar vale. <code>//</code> começa um comentário.</li>
+        </ul>
         {text === null && !error ? (
           <p className="muted">Carregando…</p>
         ) : (
@@ -52,12 +57,12 @@ export function IgnoreEditor({ folder, onClose }: { folder: FolderView; onClose:
         <AnimatePresence mode="wait" initial={false}>
           {error && (
             <motion.p key="e" className="error" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} transition={m.fade}>
-              Syncthing recusou as regras: {error}
+              Uma regra não foi aceita: {error}
             </motion.p>
           )}
           {saved && (
             <motion.p key="s" className="ok-text" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} transition={m.fade}>
-              ✓ Salvo e aplicado.
+              Salvo. Já vale para os próximos arquivos.
             </motion.p>
           )}
         </AnimatePresence>

@@ -18,7 +18,8 @@ use std::time::{Duration, Instant};
 use common::{read, require_syncthing, temp_root, wait_until, Node};
 use serde_json::json;
 use twinfolders_core::client::{Folder, Versioning};
-use twinfolders_core::{conflict, stignore};
+use twinfolders_core::conflict::{self, Resolution};
+use twinfolders_core::{resolve, stignore};
 
 const FOLDER_ID: &str = "twin-test";
 
@@ -32,10 +33,8 @@ struct Pair {
 impl Drop for Pair {
     fn drop(&mut self) {
         // Nodes are dropped after this runs; kill them first so files are free.
-        let _ = self.a.child.kill();
-        let _ = self.b.child.kill();
-        let _ = self.a.child.wait();
-        let _ = self.b.child.wait();
+        self.a.stop();
+        self.b.stop();
         let _ = fs::remove_dir_all(&self.root);
     }
 }
@@ -231,4 +230,40 @@ fn concurrent_offline_edits_create_visible_conflict_without_data_loss() {
         "no data lost"
     );
     eprintln!("EVIDENCE: conflict detected: {}", found[0].conflict_path);
+
+    // Slice 5.2: resolve on the Mac with "keep the other version" and check
+    // both machines converge with no conflict copy left and nothing lost.
+    let r = resolve::scan(&p.a.folder_path(), 10_000).unwrap();
+    assert_eq!(r.conflicts.len(), 1);
+    let loser_text = read(&p.a.folder_path().join(&found[0].conflict_path)).unwrap();
+    let winner_text = read(&a_file).unwrap();
+    let out = resolve::resolve(
+        &p.a.folder_path(),
+        &found[0].conflict_path,
+        Resolution::KeepOther,
+        "20261116-150000",
+    )
+    .unwrap();
+    assert_eq!(read(&a_file).as_deref(), Some(loser_text.as_str()));
+    assert_eq!(
+        read(&p.a.folder_path().join(&out.archived[0])).as_deref(),
+        Some(winner_text.as_str()),
+        "discarded version kept in .stversions"
+    );
+    p.a.client.scan(FOLDER_ID).unwrap();
+    wait_until(
+        Duration::from_secs(90),
+        "resolution reaches windows",
+        || {
+            read(&b_file).as_deref() == Some(loser_text.as_str())
+                && resolve::scan(&p.b.folder_path(), 10_000)
+                    .map(|r| r.conflicts.is_empty())
+                    .unwrap_or(false)
+        },
+    );
+    assert!(resolve::scan(&p.a.folder_path(), 10_000)
+        .unwrap()
+        .conflicts
+        .is_empty());
+    eprintln!("EVIDENCE: conflict resolved (KeepOther) and converged on both sides");
 }

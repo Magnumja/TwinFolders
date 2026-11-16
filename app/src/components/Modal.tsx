@@ -14,6 +14,11 @@ const FOCUSABLE = 'button:not([disabled]), [href], input:not([disabled]), select
 export function Modal({ title, onClose, children }: { title: string; onClose: () => void; children: ReactNode }) {
   const ref = useRef<HTMLDivElement>(null);
   const { reduce } = useSafeMotion();
+  // Latest onClose without re-running the effect: callers pass inline
+  // lambdas and the panel re-renders every poll, which used to steal focus
+  // from inputs every 3 s.
+  const onCloseRef = useRef(onClose);
+  onCloseRef.current = onClose;
 
   useEffect(() => {
     const prev = document.activeElement as HTMLElement | null;
@@ -22,7 +27,7 @@ export function Modal({ title, onClose, children }: { title: string; onClose: ()
     ref.current?.focus();
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape") {
-        onClose();
+        onCloseRef.current();
         return;
       }
       if (e.key !== "Tab" || !ref.current) return;
@@ -44,7 +49,7 @@ export function Modal({ title, onClose, children }: { title: string; onClose: ()
       document.body.style.overflow = prevOverflow;
       prev?.focus();
     };
-  }, [onClose]);
+  }, []);
 
   const panelFrom = reduce
     ? { opacity: 0 }

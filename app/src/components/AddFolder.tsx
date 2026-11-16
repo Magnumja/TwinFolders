@@ -64,16 +64,27 @@ export function AddFolder({ devices, onClose, onDone }: { devices: DeviceView[];
     }
   };
 
+  const peer = devices.find((d) => d.id === peerId);
+  const peerName = peer ? peer.name || shortId(peer.id) : "";
+
   return (
     <Modal title="Adicionar pasta" onClose={onClose}>
       {devices.length === 0 ? (
-        <p>Pareie o outro computador primeiro: copie o ID deste computador (no topo) e adicione no outro.</p>
+        <div className="form">
+          <p className="hero-sub">Primeiro conecte o outro computador. Em Computadores, cole o ID dele e aprove o pedido lá.</p>
+          <div className="actions">
+            <button className="btn" onClick={onClose}>Entendi</button>
+          </div>
+        </div>
       ) : (
         <div className="form">
+          <p className="modal-intro">
+            Escolha uma pasta deste computador. O outro recebe um pedido em Pendências e escolhe onde guardar. Nada aqui é apagado ou substituído.
+          </p>
           <div className="field">
             <span className="field-label">Pasta neste computador</span>
             <div className="row">
-              <code className="grow path-box">{path ?? "nenhuma escolhida"}</code>
+              <span className={path ? "grow path-box" : "grow path-box empty-path"} title={path ?? undefined}>{path ?? "Nenhuma pasta escolhida"}</span>
               <button className="btn" onClick={pick} disabled={!!busy}>Escolher…</button>
             </div>
           </div>
@@ -109,7 +120,7 @@ export function AddFolder({ devices, onClose, onDone }: { devices: DeviceView[];
             </motion.div>
           )}
           {blocking && (
-            <label className="toggle">
+            <label className="check">
               <input type="checkbox" checked={ack} onChange={(e) => setAck(e.target.checked)} />
               Entendo os problemas acima e quero compartilhar mesmo assim
             </label>
@@ -147,7 +158,7 @@ export function AddFolder({ devices, onClose, onDone }: { devices: DeviceView[];
           <div className="actions">
             <button className="btn" onClick={onClose}>Cancelar</button>
             <motion.button className="btn btn-primary" onClick={share} disabled={!canShare} whileTap={canShare ? m.press : undefined} transition={springs.snappy}>
-              Compartilhar
+              {peerName ? `Compartilhar com ${peerName}` : "Compartilhar"}
             </motion.button>
           </div>
         </div>

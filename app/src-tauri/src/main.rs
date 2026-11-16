@@ -6,19 +6,24 @@
 
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+use std::collections::BTreeSet;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use serde::Serialize;
 use tauri::menu::{Menu, MenuItem};
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
 use tauri::{AppHandle, Emitter, Manager, State, WindowEvent};
+use tauri_plugin_notification::NotificationExt;
 use twinfolders_core::client::{Ignores, PendingDevice, PendingFolder, SyncthingClient};
+use twinfolders_core::conflict::Resolution;
 use twinfolders_core::overview::{self, Overview, RateSample};
 use twinfolders_core::pairing::{self, ShareRequest};
 use twinfolders_core::preflight;
+use twinfolders_core::resolve::{self, ConflictEntry, Outcome};
 use twinfolders_core::service::{self, ServiceConfig};
+use twinfolders_core::versioning::Choice;
 use twinfolders_core::{secrets, stconfig};
 
 /// Events that change what the panel shows.
@@ -36,16 +41,113 @@ const WATCHED_EVENTS: &[&str] = &[
     "PendingFoldersChanged",
 ];
 
+/// Locks a mutex, recovering from poisoning: one panicked command must not
+/// make every later command panic too.
+fn lock<T>(m: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
+    m.lock().unwrap_or_else(|e| e.into_inner())
+}
+
+/// Max directory entries walked per folder when looking for conflicts.
+const CONFLICT_SCAN_LIMIT: usize = 200_000;
+const CONFLICT_POLL: Duration = Duration::from_secs(60);
+
 #[derive(Default)]
 struct AppState {
     client: Mutex<Option<SyncthingClient>>,
     rates: Mutex<Option<RateSample>>,
+    /// `folder_id/conflict_path` already notified, so each conflict
+    /// produces one notification.
+    notified: Mutex<BTreeSet<String>>,
+    /// Last overview and when it was taken. Polls and event-driven refreshes
+    /// can land milliseconds apart; reusing a fresh result avoids transfer
+    /// rates computed over a near-zero interval (spikes or zeros).
+    last: Mutex<Option<(Instant, Overview)>>,
+}
+
+#[derive(Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+struct FolderConflicts {
+    folder_id: String,
+    label: String,
+    conflicts: Vec<ConflictEntry>,
+    truncated: bool,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct VersioningView {
+    /// `None` = a type the app does not manage (e.g. external): shown
+    /// read-only, never overwritten by accident.
+    choice: Option<Choice>,
+    kind: String,
+}
+
+/// Folder root from Syncthing's own config (never from the UI), with
+/// Syncthing's `~` expansion.
+fn folder_root(c: &SyncthingClient, folder_id: &str) -> Result<PathBuf, String> {
+    let f = c.folder(folder_id).map_err(|e| e.to_string())?;
+    let p = &f.path;
+    let rest = if p == "~" {
+        Some("")
+    } else {
+        p.strip_prefix("~/").or_else(|| p.strip_prefix("~\\"))
+    };
+    if let Some(rest) = rest {
+        // Same variable Syncthing uses for `~` on each OS (Git Bash may
+        // set HOME on Windows to something else).
+        let var = if cfg!(windows) { "USERPROFILE" } else { "HOME" };
+        let home = std::env::var_os(var).ok_or("pasta pessoal desconhecida")?;
+        return Ok(PathBuf::from(home).join(rest));
+    }
+    Ok(PathBuf::from(p))
+}
+
+/// Peer-offered folder labels end up in OS notifications: drop control and
+/// invisible/bidi characters and cap the length.
+fn clean_label(s: &str) -> String {
+    let cleaned: String = s
+        .chars()
+        .filter(|c| {
+            !c.is_control()
+                && !matches!(c, '\u{00AD}' | '\u{200B}'..='\u{200F}' | '\u{202A}'..='\u{202E}' | '\u{2060}'..='\u{2069}' | '\u{FEFF}')
+        })
+        .collect();
+    let mut out: String = cleaned.trim().chars().take(80).collect();
+    if cleaned.trim().chars().count() > 80 {
+        out.push('…');
+    }
+    out
+}
+
+fn scan_all_conflicts(c: &SyncthingClient) -> Result<Vec<FolderConflicts>, String> {
+    let mut out = Vec::new();
+    for f in c.folders().map_err(|e| e.to_string())? {
+        let Ok(root) = folder_root(c, &f.id) else {
+            continue;
+        };
+        // A folder whose path is missing/unreadable is reported by the
+        // overview as an error; skip it here.
+        let Ok(r) = resolve::scan(&root, CONFLICT_SCAN_LIMIT) else {
+            continue;
+        };
+        out.push(FolderConflicts {
+            label: if f.label.is_empty() {
+                f.id.clone()
+            } else {
+                f.label.clone()
+            },
+            folder_id: f.id,
+            conflicts: r.conflicts,
+            truncated: r.truncated,
+        });
+    }
+    Ok(out)
 }
 
 #[derive(Serialize)]
 #[serde(tag = "status", rename_all = "camelCase")]
 enum Snapshot {
-    Ok { overview: Overview },
+    Ok { overview: Box<Overview> },
     NotInstalled { message: String },
     NotRunning { message: String },
 }
@@ -96,7 +198,7 @@ fn connect() -> Result<SyncthingClient, Snapshot> {
 }
 
 fn cached_client(st: &AppState) -> Result<SyncthingClient, Snapshot> {
-    let mut slot = st.client.lock().unwrap();
+    let mut slot = lock(&st.client);
     if let Some(c) = slot.as_ref() {
         return Ok(c.clone());
     }
@@ -105,21 +207,36 @@ fn cached_client(st: &AppState) -> Result<SyncthingClient, Snapshot> {
     Ok(c)
 }
 
+const MIN_SNAPSHOT_GAP: Duration = Duration::from_secs(1);
+
 fn snapshot(st: &AppState) -> Snapshot {
+    // Held for the whole snapshot: serializes concurrent refreshes.
+    let mut last = lock(&st.last);
+    if let Some((at, ov)) = last.as_ref() {
+        if at.elapsed() < MIN_SNAPSHOT_GAP {
+            return Snapshot::Ok {
+                overview: Box::new(ov.clone()),
+            };
+        }
+    }
     let client = match cached_client(st) {
         Ok(c) => c,
         Err(s) => return s,
     };
-    let prev = st.rates.lock().unwrap().clone();
+    let prev = lock(&st.rates).clone();
     match overview::collect(&client, prev.as_ref()) {
         Ok((ov, sample)) => {
-            *st.rates.lock().unwrap() = Some(sample);
-            Snapshot::Ok { overview: ov }
+            *lock(&st.rates) = Some(sample);
+            *last = Some((Instant::now(), ov.clone()));
+            Snapshot::Ok {
+                overview: Box::new(ov),
+            }
         }
         Err(e) => {
             // Reconnect next time (daemon restarted, key rotated, ...).
-            *st.client.lock().unwrap() = None;
-            *st.rates.lock().unwrap() = None;
+            *lock(&st.client) = None;
+            *lock(&st.rates) = None;
+            *last = None;
             Snapshot::NotRunning {
                 message: format!("Não foi possível falar com o Syncthing local: {e}"),
             }
@@ -150,6 +267,50 @@ async fn with_client<T: Send + 'static>(
     })
     .await
     .map_err(|e| e.to_string())?
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct Profile {
+    /// OS account name, for the greeting/avatar. Never leaves this machine.
+    user: String,
+    os: &'static str,
+    version: String,
+}
+
+#[tauri::command]
+fn get_profile(app: AppHandle) -> Profile {
+    let user = std::env::var("USER")
+        .or_else(|_| std::env::var("USERNAME"))
+        .unwrap_or_default();
+    Profile {
+        user,
+        os: std::env::consts::OS,
+        version: app.package_info().version.to_string(),
+    }
+}
+
+/// Adds the other computer by its ID (as pasted) and optional address.
+/// The other side then gets a pairing request to approve. Returns the
+/// canonical ID.
+#[tauri::command]
+async fn add_device(
+    state: State<'_, Arc<AppState>>,
+    device_id: String,
+    name: String,
+    address: String,
+) -> Result<String, String> {
+    with_client(state.inner(), move |c| {
+        twinfolders_core::peer::add_peer(
+            c,
+            &device_id,
+            &name,
+            &address,
+            service::DEFAULT_LISTEN_PORT,
+        )
+        .map_err(|e| e.to_string())
+    })
+    .await
 }
 
 /// Explicit user approval of a device that asked to pair.
@@ -251,6 +412,61 @@ async fn remove_folder(state: State<'_, Arc<AppState>>, folder_id: String) -> Re
     .await
 }
 
+/// Pauses or resumes syncing one folder.
+#[tauri::command]
+async fn set_folder_paused(
+    state: State<'_, Arc<AppState>>,
+    folder_id: String,
+    paused: bool,
+) -> Result<(), String> {
+    with_client(state.inner(), move |c| {
+        c.set_folder_paused(&folder_id, paused)
+            .map_err(|e| e.to_string())
+    })
+    .await
+}
+
+/// Opens a synced folder in Finder / Explorer. The path comes from
+/// Syncthing's config (never from the UI) and must be an existing directory.
+#[tauri::command]
+async fn reveal_folder(state: State<'_, Arc<AppState>>, folder_id: String) -> Result<(), String> {
+    with_client(state.inner(), move |c| {
+        let root = folder_root(c, &folder_id)?;
+        // Absolute + canonical: a path can never start with '-' and be read
+        // as an option by the opener.
+        if !root.is_absolute() {
+            return Err(format!(
+                "caminho da pasta não é absoluto: {}",
+                root.display()
+            ));
+        }
+        let root = std::fs::canonicalize(&root)
+            .ok()
+            .filter(|p| p.is_dir())
+            .ok_or_else(|| format!("a pasta não existe neste computador: {}", root.display()))?;
+        let opener = if cfg!(target_os = "macos") {
+            "open"
+        } else if cfg!(windows) {
+            "explorer"
+        } else {
+            "xdg-open"
+        };
+        // The path is a single argument (no shell), so spaces and quotes
+        // in folder names are passed through untouched.
+        let mut child = std::process::Command::new(opener)
+            .arg(&root)
+            .spawn()
+            .map_err(|e| format!("não foi possível abrir a pasta: {e}"))?;
+        // Reap it so no zombie is left (explorer.exe exits 1 even on success,
+        // so the status is ignored).
+        std::thread::spawn(move || {
+            let _ = child.wait();
+        });
+        Ok(())
+    })
+    .await
+}
+
 #[tauri::command]
 async fn get_ignores(
     state: State<'_, Arc<AppState>>,
@@ -276,9 +492,134 @@ async fn set_ignores(
     .await
 }
 
+#[tauri::command]
+async fn list_conflicts(state: State<'_, Arc<AppState>>) -> Result<Vec<FolderConflicts>, String> {
+    with_client(state.inner(), scan_all_conflicts).await
+}
+
+/// Resolves one conflict copy. `tag` is the local time `YYYYMMDD-HHMMSS`
+/// (from the UI clock) used to name the archived copy like Syncthing does.
+#[tauri::command]
+async fn resolve_conflict(
+    state: State<'_, Arc<AppState>>,
+    folder_id: String,
+    conflict_path: String,
+    resolution: Resolution,
+    tag: String,
+) -> Result<Outcome, String> {
+    with_client(state.inner(), move |c| {
+        let root = folder_root(c, &folder_id)?;
+        let out =
+            resolve::resolve(&root, &conflict_path, resolution, &tag).map_err(|e| e.to_string())?;
+        // Pick the change up now instead of waiting for the watcher.
+        let _ = c.scan(&folder_id);
+        Ok(out)
+    })
+    .await
+}
+
+#[tauri::command]
+async fn get_versioning(
+    state: State<'_, Arc<AppState>>,
+    folder_id: String,
+) -> Result<VersioningView, String> {
+    with_client(state.inner(), move |c| {
+        let v = c.folder(&folder_id).map_err(|e| e.to_string())?.versioning;
+        Ok(VersioningView {
+            choice: Choice::from_versioning(&v),
+            kind: v.kind,
+        })
+    })
+    .await
+}
+
+#[tauri::command]
+async fn set_versioning(
+    state: State<'_, Arc<AppState>>,
+    folder_id: String,
+    choice: Choice,
+) -> Result<(), String> {
+    with_client(state.inner(), move |c| {
+        let cur = c.folder(&folder_id).map_err(|e| e.to_string())?.versioning;
+        // A type configured outside the app (e.g. external) is shown
+        // read-only; never overwrite it from here.
+        if Choice::from_versioning(&cur).is_none() {
+            return Err(format!(
+                "esta pasta usa um versionamento personalizado ({}); altere-o no painel do Syncthing",
+                cur.kind
+            ));
+        }
+        c.set_folder_versioning(&folder_id, &choice.apply(&cur))
+            .map_err(|e| e.to_string())
+    })
+    .await
+}
+
+/// Periodically looks for new conflict copies; notifies once per conflict
+/// and tells the UI to refresh its list.
+fn watch_conflicts(app: AppHandle, st: Arc<AppState>) {
+    std::thread::spawn(move || loop {
+        if let Ok(c) = cached_client(&st) {
+            if let Ok(all) = scan_all_conflicts(&c) {
+                let key = |f: &FolderConflicts, x: &ConflictEntry| {
+                    format!("{}/{}", f.folder_id, x.conflict_path)
+                };
+                let scanned: BTreeSet<&str> = all.iter().map(|f| f.folder_id.as_str()).collect();
+                let current: BTreeSet<String> = all
+                    .iter()
+                    .flat_map(|f| f.conflicts.iter().map(move |x| key(f, x)))
+                    .collect();
+                let mut notified = lock(&st.notified);
+                let fresh: Vec<(&FolderConflicts, &ConflictEntry)> = all
+                    .iter()
+                    .flat_map(|f| f.conflicts.iter().map(move |x| (f, x)))
+                    .filter(|(f, x)| !notified.contains(&key(f, x)))
+                    .collect();
+                let changed = notified
+                    .iter()
+                    .filter(|k| scanned.iter().any(|id| k.starts_with(&format!("{id}/"))))
+                    .cloned()
+                    .collect::<BTreeSet<_>>()
+                    != current;
+                if let Some((f, x)) = fresh.first() {
+                    let body = if fresh.len() == 1 {
+                        format!(
+                            "Possível conflito em \"{}\" ({}). Abra o TwinFolders para escolher qual versão manter.",
+                            clean_label(&x.original_path),
+                            clean_label(&f.label)
+                        )
+                    } else {
+                        format!(
+                            "{} novos possíveis conflitos: escolha qual versão manter.",
+                            fresh.len()
+                        )
+                    };
+                    let _ = app
+                        .notification()
+                        .builder()
+                        .title("Possível conflito de sincronização")
+                        .body(body)
+                        .show();
+                }
+                // Keep entries of folders that could not be scanned this
+                // round, so their conflicts do not notify again later.
+                notified.retain(|k| !scanned.iter().any(|id| k.starts_with(&format!("{id}/"))));
+                notified.extend(current.iter().cloned());
+                let count = current.len();
+                drop(notified);
+                if changed || !fresh.is_empty() {
+                    let _ = app.emit("conflicts-changed", count);
+                }
+            }
+        }
+        std::thread::sleep(CONFLICT_POLL);
+    });
+}
+
 /// Long-polls Syncthing events and tells the UI to refresh. Survives daemon
-/// restarts: on error it reconnects and restarts from event 0, and if IDs go
-/// backwards (new daemon process) it resynchronizes.
+/// restarts: on error it reconnects and restarts from event 0. A restart that
+/// does not break the connection would leave `since` ahead of the new IDs
+/// until they catch up; the UI's 3 s poll covers that gap.
 fn watch_events(app: AppHandle) {
     std::thread::spawn(move || {
         let mut since: u64 = 0;
@@ -329,19 +670,28 @@ fn main() {
             tauri_plugin_autostart::MacosLauncher::LaunchAgent,
             Some(vec!["--minimized"]),
         ))
-        .manage(state)
+        .manage(state.clone())
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_notification::init())
         .invoke_handler(tauri::generate_handler![
             get_overview,
+            get_profile,
             approve_device,
+            add_device,
             scan_folder,
             share_folder,
             accept_folder,
             remove_folder,
+            set_folder_paused,
+            reveal_folder,
             get_ignores,
-            set_ignores
+            set_ignores,
+            list_conflicts,
+            resolve_conflict,
+            get_versioning,
+            set_versioning
         ])
-        .setup(|app| {
+        .setup(move |app| {
             let open = MenuItem::with_id(app, "open", "Abrir painel", true, None::<&str>)?;
             let quit = MenuItem::with_id(app, "quit", "Sair do TwinFolders", true, None::<&str>)?;
             let menu = Menu::with_items(app, &[&open, &quit])?;
@@ -375,6 +725,7 @@ fn main() {
                 }
             }
             watch_events(app.handle().clone());
+            watch_conflicts(app.handle().clone(), state.clone());
             Ok(())
         })
         .on_window_event(|w, e| {

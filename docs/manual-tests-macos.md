@@ -75,6 +75,13 @@ Valores de referência: label `dev.twinfolders.syncthing`; plist `~/Library/Laun
 - ☐ Desinstalar de novo (idempotência): `twinfolders service uninstall` → sem erro fatal.
 - ☐ Reinstalar (`service install`) reaproveita o mesmo device ID: compare com o anotado no passo 2.
 
+## Conflitos e versionamento (Fatia 5)
+
+- ☐ Com os dois computadores pausados um para o outro, edite o mesmo arquivo nos dois e retome. Em até ~1 min aparece uma **notificação nativa** "Conflito de sincronização" (uma só por conflito) e o topo do painel mostra "1 conflito para resolver".
+- ☐ No cartão do conflito, "Manter as duas": a cópia vira `nome (conflito XXXXXXX AAAA-MM-DD HH.MM.SS).ext` ao lado do original, nos **dois** computadores.
+- ☐ Repita e escolha "Usar a cópia": o original vai para `.stversions/…/nome~AAAAMMDD-HHMMSS.ext` e a cópia toma o lugar; o outro computador recebe a mudança e o cartão some dos dois lados.
+- ☐ "Versões" numa pasta: troque para "Últimas N versões" (5), salve, reabra e confira que persistiu. No painel web do Syncthing a pasta mostra o mesmo tipo.
+
 ## 7. Resultados
 
 | Passo | Resultado | Observações |
@@ -86,3 +93,4 @@ Valores de referência: label `dev.twinfolders.syncthing`; plist `~/Library/Laun
 | 4b. Desligamento limpo não reinicia | NÃO VERIFICADO | |
 | 5. Reinício sem abrir o app (+ arquivo do par chega) | NÃO VERIFICADO | |
 | 6. Desinstalar (home e pastas preservados) | NÃO VERIFICADO | |
+| Conflitos e versionamento (Fatia 5) | NÃO VERIFICADO | |

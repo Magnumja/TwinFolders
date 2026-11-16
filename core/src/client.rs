@@ -608,6 +608,40 @@ impl SyncthingClient {
         )
     }
 
+    /// One folder's config.
+    pub fn folder(&self, id: &str) -> Result<Folder> {
+        validate_folder_id(id)?;
+        self.get_json(&format!("/rest/config/folders/{id}"), &[], DEFAULT_TIMEOUT)
+    }
+
+    /// Replaces a folder's versioning object (PATCH replaces child objects
+    /// whole, so pass a complete `Versioning`).
+    pub fn set_folder_versioning(&self, id: &str, v: &Versioning) -> Result<()> {
+        validate_folder_id(id)?;
+        self.send_json(
+            "PATCH",
+            &format!("/rest/config/folders/{id}"),
+            &serde_json::json!({ "versioning": v }),
+        )
+    }
+
+    /// Pauses or resumes one folder (other settings untouched).
+    pub fn set_folder_paused(&self, id: &str, paused: bool) -> Result<()> {
+        validate_folder_id(id)?;
+        self.send_json(
+            "PATCH",
+            &format!("/rest/config/folders/{id}"),
+            &serde_json::json!({ "paused": paused }),
+        )
+    }
+
+    /// Archived versions Syncthing knows about: `{ "rel/path": [{versionTime,
+    /// modTime, size}] }`.
+    pub fn folder_versions(&self, id: &str) -> Result<Value> {
+        validate_folder_id(id)?;
+        self.get_json("/rest/folder/versions", &[("folder", id)], DEFAULT_TIMEOUT)
+    }
+
     /// PATCH global options, e.g. `{"relaysEnabled": false}`.
     pub fn patch_options(&self, patch: &Value) -> Result<()> {
         self.send_json("PATCH", "/rest/config/options", patch)

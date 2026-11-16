@@ -28,7 +28,7 @@ export function describeHealth(h: FolderHealth): HealthText {
 }
 
 /** One-line summary for the header: errors > syncing > waiting > ok. */
-export function overallStatus(o: Overview): HealthText {
+export function overallStatus(o: Overview, conflicts = 0): HealthText {
   if (o.folders.length === 0) {
     return { label: "Nenhuma pasta sincronizada ainda", tone: "muted" };
   }
@@ -36,6 +36,9 @@ export function overallStatus(o: Overview): HealthText {
   const errors = kinds.filter((k) => k === "error").length;
   if (errors > 0) {
     return { label: `Atenção: ${errors} ${errors === 1 ? "pasta" : "pastas"} com erro`, tone: "error" };
+  }
+  if (conflicts > 0) {
+    return { label: `${conflicts} ${conflicts === 1 ? "conflito" : "conflitos"} para resolver`, tone: "wait" };
   }
   if (kinds.some((k) => k === "syncing" || k === "scanning")) return { label: "Sincronizando…", tone: "busy" };
   if (kinds.includes("waitingForPeer")) return { label: "Aguardando o outro computador", tone: "wait" };

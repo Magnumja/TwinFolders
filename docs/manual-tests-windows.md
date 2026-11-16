@@ -70,6 +70,14 @@ Valores de referência: tarefa `\TwinFolders\Syncthing` (gatilho: logon do usuá
 - ☐ Desinstalar de novo (idempotência) → sem erro fatal.
 - ☐ Reinstalar reaproveita o mesmo device ID anotado no passo 2.
 
+## Conflitos e versionamento (Fatia 5)
+
+- ☐ Com os dois computadores pausados um para o outro, edite o mesmo arquivo nos dois e retome. Em até ~1 min aparece uma **notificação nativa** "Conflito de sincronização" (uma só por conflito) e o topo do painel mostra "1 conflito para resolver".
+- ☐ No cartão do conflito, "Manter as duas": a cópia vira `nome (conflito XXXXXXX AAAA-MM-DD HH.MM.SS).ext` ao lado do original, nos **dois** computadores.
+- ☐ Repita e escolha "Usar a cópia": o original vai para `.stversions/…/nome~AAAAMMDD-HHMMSS.ext` e a cópia toma o lugar; o outro computador recebe a mudança e o cartão some dos dois lados.
+- ☐ "Versões" numa pasta: troque para "Últimas N versões" (5), salve, reabra e confira que persistiu. No painel web do Syncthing a pasta mostra o mesmo tipo.
+- ☐ (Windows) A notificação aparece na Central de Ações; nome com acento e caminho com espaço resolvem sem erro.
+
 ## 7. Resultados
 
 | Passo | Resultado | Observações |
@@ -81,3 +89,4 @@ Valores de referência: tarefa `\TwinFolders\Syncthing` (gatilho: logon do usuá
 | 4b. Desligamento limpo (tarefa termina, sem reinício) | NÃO VERIFICADO | |
 | 5. Reinício sem abrir o app (+ arquivo do par chega) | NÃO VERIFICADO | |
 | 6. Desinstalar (home e pastas preservados) | NÃO VERIFICADO | |
+| Conflitos e versionamento (Fatia 5) | NÃO VERIFICADO | |

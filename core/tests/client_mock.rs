@@ -390,3 +390,98 @@ fn ignores_validate_folder_id() {
         Err(Error::InvalidFolderId(_))
     ));
 }
+
+#[test]
+fn set_folder_paused_patches_only_paused_and_validates_id() {
+    let mut s = Server::new();
+    let m = s
+        .mock("PATCH", "/rest/config/folders/twin-docs")
+        .match_header("X-API-Key", KEY)
+        .match_body(Matcher::JsonString(r#"{"paused":true}"#.into()))
+        .create();
+    client(&s).set_folder_paused("twin-docs", true).unwrap();
+    m.assert();
+    let none = s.mock("PATCH", Matcher::Any).expect(0).create();
+    assert!(matches!(
+        client(&s).set_folder_paused("../options", false),
+        Err(Error::InvalidFolderId(_))
+    ));
+    none.assert();
+}
+
+mod add_peer {
+    use super::*;
+    use twinfolders_core::peer::{self, Error as PeerError};
+
+    const ME: &str = "ZO5XTSC-KSY4NFT-L47RJH4-MVGAWUN-XGPSAS2-VXP4JSK-6LZNSVP-CISINA2";
+    const OTHER: &str = "HHI5PAB-J5EJ7WD-4TUXQXE-OG7GERX-PJKGPLY-D7KUYMC-5KBMGDN-FVNAEQM";
+
+    fn server(devices: &str) -> mockito::ServerGuard {
+        let mut s = Server::new();
+        s.mock("GET", "/rest/system/status")
+            .with_body(format!(r#"{{"myID":"{ME}"}}"#))
+            .create();
+        s.mock("GET", "/rest/config/devices")
+            .with_body(devices)
+            .create();
+        s
+    }
+
+    #[test]
+    fn adds_with_normalized_id_and_tailscale_address() {
+        let mut s = server(&format!(r#"[{{"deviceID":"{ME}","name":"mac"}}]"#));
+        let post = s
+            .mock("POST", "/rest/config/devices")
+            .match_body(Matcher::PartialJsonString(format!(
+                r#"{{"deviceID":"{OTHER}","name":"Windows PC","addresses":["tcp://windows-pc:22001"],"autoAcceptFolders":false}}"#
+            )))
+            .create();
+        let id = peer::add_peer(
+            &client(&s),
+            &OTHER.to_lowercase().replace('-', " "),
+            " Windows PC ",
+            "windows-pc",
+            22001,
+        )
+        .unwrap();
+        assert_eq!(id, OTHER);
+        post.assert();
+    }
+
+    #[test]
+    fn empty_address_means_local_discovery() {
+        let mut s = server("[]");
+        let post = s
+            .mock("POST", "/rest/config/devices")
+            .match_body(Matcher::PartialJsonString(
+                r#"{"addresses":["dynamic"]}"#.into(),
+            ))
+            .create();
+        peer::add_peer(&client(&s), OTHER, "", "", 22001).unwrap();
+        post.assert();
+    }
+
+    #[test]
+    fn refuses_self_duplicates_and_typos_without_posting() {
+        let mut s = server(&format!(r#"[{{"deviceID":"{OTHER}","name":"win"}}]"#));
+        let none = s.mock("POST", Matcher::Any).expect(0).create();
+        let c = client(&s);
+        assert_eq!(
+            peer::add_peer(&c, ME, "", "", 22001),
+            Err(PeerError::IsSelf)
+        );
+        assert_eq!(
+            peer::add_peer(&c, OTHER, "", "", 22001),
+            Err(PeerError::AlreadyPaired)
+        );
+        assert_eq!(
+            peer::add_peer(&c, &OTHER.replacen("HHI5PAB", "HHI5PAC", 1), "", "", 22001),
+            Err(PeerError::Checksum)
+        );
+        assert!(matches!(
+            peer::add_peer(&c, OTHER, "", "a b", 22001),
+            Err(PeerError::BadAddress(_))
+        ));
+        none.assert();
+    }
+}

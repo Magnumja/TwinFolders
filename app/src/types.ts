@@ -53,6 +53,7 @@ export interface PendingFolder {
 
 export interface Overview {
   myId: string;
+  myName: string;
   devices: DeviceView[];
   folders: FolderView[];
   pendingDevices: PendingDevice[];
@@ -82,3 +83,48 @@ export type Snapshot =
   | { status: "ok"; overview: Overview }
   | { status: "notInstalled"; message: string }
   | { status: "notRunning"; message: string };
+
+/** core::resolve::ConflictEntry */
+export interface ConflictEntry {
+  conflictPath: string;
+  originalPath: string;
+  deviceShortId: string;
+  when: string;
+  conflictSize: number;
+  originalSize: number | null;
+}
+
+export interface FolderConflicts {
+  folderId: string;
+  label: string;
+  conflicts: ConflictEntry[];
+  truncated: boolean;
+}
+
+export type Resolution = "keepMine" | "keepOther" | "keepBoth";
+
+export interface ResolveOutcome {
+  archived: string[];
+  renamedTo: string[];
+}
+
+/** core::versioning::Choice */
+export type VersioningChoice =
+  | { kind: "off" }
+  | { kind: "trashcan"; days: number }
+  | { kind: "simple"; keep: number; days: number }
+  | { kind: "staggered"; days: number };
+
+export interface VersioningView {
+  choice: VersioningChoice | null;
+  kind: string;
+}
+
+/** get_profile: local account info for the personal touches in the shell. */
+export interface Profile {
+  user: string;
+  os: string;
+  version: string;
+}
+
+export type View = "overview" | "folders" | "computers" | "pending" | "help";

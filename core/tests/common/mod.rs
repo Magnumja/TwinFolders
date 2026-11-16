@@ -141,9 +141,29 @@ impl Node {
     }
 }
 
-impl Drop for Node {
-    fn drop(&mut self) {
+impl Node {
+    /// Stops the daemon. `serve` is a monitor that spawns a worker: killing
+    /// only the monitor orphans the worker, so ask for a REST shutdown first
+    /// and kill only as a fallback.
+    pub fn stop(&mut self) {
+        if self.child.try_wait().ok().flatten().is_some() {
+            return;
+        }
+        let _ = self.client.shutdown();
+        let start = Instant::now();
+        while start.elapsed() < Duration::from_secs(15) {
+            if self.child.try_wait().ok().flatten().is_some() {
+                return;
+            }
+            std::thread::sleep(Duration::from_millis(100));
+        }
         let _ = self.child.kill();
         let _ = self.child.wait();
+    }
+}
+
+impl Drop for Node {
+    fn drop(&mut self) {
+        self.stop();
     }
 }

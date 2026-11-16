@@ -8,6 +8,8 @@ import { AnimatePresence, motion } from "motion/react";
 import { motionTokens, springs } from "../lib/motion-tokens";
 import { useSafeMotion } from "../hooks/useSafeMotion";
 import { useToast } from "./Toasts";
+import { IdBlocks } from "./Guide";
+import { connectionKind } from "../lib/space";
 
 /** Pairing requests and folder offers: nothing is accepted automatically. */
 export function Pending({ overview, onChange }: { overview: Overview; onChange: () => void }) {
@@ -60,15 +62,19 @@ export function Pending({ overview, onChange }: { overview: Overview; onChange: 
     <AnimatePresence initial={false}>
       {!empty && (
     <motion.section key="pending" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} transition={m.fade}>
-      <h2>Pedidos pendentes <span className="count count-wait">{pendingDevices.length + pendingFolders.length}</span></h2>
+      <h2>Pedidos <span className="count count-wait">{pendingDevices.length + pendingFolders.length}</span></h2>
       <div className="list">
         <AnimatePresence mode="popLayout" initial={false}>
         {pendingDevices.map((d) => (
           <motion.article key={d.deviceId} className="card row pending" {...item}>
             <div className="grow">
-              <strong>{d.name || "Computador desconhecido"}</strong> quer se conectar
-              <p className="muted small mono">ID {d.deviceId}{d.address ? ` · ${d.address}` : ""}</p>
-              <p className="muted small">Só aprove se for o seu outro computador (confira o ID nele).</p>
+              <strong>{d.name || "Um computador sem nome"}</strong> quer se conectar
+              {d.address && <span className="sub"> {({ Tailscale: "pelo Tailscale", "Rede local": "pela rede local", Internet: "pela internet" } as Record<string, string>)[connectionKind(d.address)] ?? ""}</span>}
+              <IdBlocks id={d.deviceId} />
+              <p className="sub">
+                Aprove só se for o seu outro computador. Para conferir, abra o TwinFolders nele, vá em Computadores e veja se o ID começa com{" "}
+                <b>{d.deviceId.split("-")[0]}</b>.
+              </p>
             </div>
             <motion.button className="btn btn-primary" disabled={busy === d.deviceId} onClick={() => approve(d.deviceId, d.name)} whileTap={m.press}>Aprovar</motion.button>
           </motion.article>
@@ -77,8 +83,9 @@ export function Pending({ overview, onChange }: { overview: Overview; onChange: 
           <motion.article key={`${f.folderId}-${f.offeredBy}`} className="card row pending" {...item}>
             <div className="grow">
               <strong>{name(f.offeredBy)}</strong> quer compartilhar a pasta <strong>{f.label || f.folderId}</strong>
+              <p className="sub">Ao aceitar, você escolhe onde guardar neste computador. A partir daí, a pasta fica igual nos dois.</p>
             </div>
-            <motion.button className="btn btn-primary" disabled={busy === f.folderId} onClick={() => accept(f.folderId, f.offeredBy, f.label)} whileTap={m.press}>Aceitar…</motion.button>
+            <motion.button className="btn btn-primary" disabled={busy === f.folderId} onClick={() => accept(f.folderId, f.offeredBy, f.label)} whileTap={m.press}>Escolher onde guardar…</motion.button>
           </motion.article>
         ))}
         </AnimatePresence>

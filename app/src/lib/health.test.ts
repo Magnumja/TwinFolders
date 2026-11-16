@@ -13,7 +13,7 @@ describe("describeHealth", () => {
   });
 });
 
-const base: Overview = { myId: "ME", devices: [], folders: [], pendingDevices: [], pendingFolders: [] };
+const base: Overview = { myId: "ME", myName: "Mac", devices: [], folders: [], pendingDevices: [], pendingFolders: [] };
 const folder = (kind: string, extra: object = {}) => ({
   id: kind, label: kind, path: "/x", needBytes: 0, globalBytes: 0, peers: [], lastSync: null,
   health: { kind, ...extra } as never,
@@ -32,5 +32,14 @@ describe("overallStatus", () => {
   it("counts folders with errors", () => {
     const s = overallStatus({ ...base, folders: [folder("error", { message: "a" }), folder("error", { message: "b" })] });
     expect(s.label).toBe("Atenção: 2 pastas com erro");
+  });
+});
+
+describe("overallStatus with conflicts", () => {
+  it("conflicts outrank everything except errors", () => {
+    expect(overallStatus({ ...base, folders: [folder("upToDate")] }, 1)).toEqual({ label: "1 conflito para resolver", tone: "wait" });
+    expect(overallStatus({ ...base, folders: [folder("syncing", { percent: 3 })] }, 2)).toEqual({ label: "2 conflitos para resolver", tone: "wait" });
+    expect(overallStatus({ ...base, folders: [folder("error", { message: "x" })] }, 2).tone).toBe("error");
+    expect(overallStatus({ ...base, folders: [folder("upToDate")] }, 0).label).toBe("Tudo sincronizado");
   });
 });

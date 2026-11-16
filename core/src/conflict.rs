@@ -175,7 +175,8 @@ pub fn find_conflicts<'a>(paths: impl IntoIterator<Item = &'a str>) -> Vec<Confl
     v
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub enum Resolution {
     KeepMine,
     KeepOther,
@@ -189,8 +190,20 @@ pub enum Resolution {
 /// lose a file without a recoverable copy.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum FsAction {
-    ArchiveToVersions { path: String },
-    Rename { from: String, to: String },
+    ArchiveToVersions {
+        path: String,
+    },
+    /// Move `from` to exactly `to`; fails if `to` exists.
+    Rename {
+        from: String,
+        to: String,
+    },
+    /// Move `from` to `to`, or to `to` with " 2", " 3"... before the
+    /// extension if taken. Never replaces an existing file.
+    RenameUnique {
+        from: String,
+        to: String,
+    },
 }
 
 /// Plans the steps to resolve `conflict`. Never produces a delete: every path
@@ -220,7 +233,7 @@ pub fn plan(conflict: &ConflictFile, resolution: Resolution) -> Vec<FsAction> {
                 Some(i) if i > 0 => name.split_at(i),
                 _ => (name, ""),
             };
-            vec![FsAction::Rename {
+            vec![FsAction::RenameUnique {
                 from: conflict.conflict_path.clone(),
                 to: format!(
                     "{dir}{stem} (conflito {} {:04}-{:02}-{:02} {:02}.{:02}.{:02}){ext}",
@@ -410,7 +423,7 @@ mod tests {
         let c = p("report.sync-conflict-20261116-143005-ABCDEF2.docx");
         assert_eq!(
             plan(&c, Resolution::KeepBoth),
-            vec![FsAction::Rename {
+            vec![FsAction::RenameUnique {
                 from: "report.sync-conflict-20261116-143005-ABCDEF2.docx".into(),
                 to: "report (conflito ABCDEF2 2026-11-16 14.30.05).docx".into()
             }]
@@ -422,17 +435,17 @@ mod tests {
         let c = p("a/b/Makefile.sync-conflict-20260102-030405-ABCDEF2");
         assert_eq!(
             plan(&c, Resolution::KeepBoth),
-            vec![FsAction::Rename {
+            vec![FsAction::RenameUnique {
                 from: c.conflict_path.clone(),
                 to: "a/b/Makefile (conflito ABCDEF2 2026-01-02 03.04.05)".into()
             }]
         );
         let c = p("archive.tar.sync-conflict-20260102-030405-ABCDEF2.gz");
         assert!(matches!(&plan(&c, Resolution::KeepBoth)[0],
-            FsAction::Rename { to, .. } if to == "archive.tar (conflito ABCDEF2 2026-01-02 03.04.05).gz"));
+            FsAction::RenameUnique { to, .. } if to == "archive.tar (conflito ABCDEF2 2026-01-02 03.04.05).gz"));
         let c = p(".bashrc.sync-conflict-20260102-030405-ABCDEF2");
         assert!(matches!(&plan(&c, Resolution::KeepBoth)[0],
-            FsAction::Rename { to, .. } if to == ".bashrc (conflito ABCDEF2 2026-01-02 03.04.05)"));
+            FsAction::RenameUnique { to, .. } if to == ".bashrc (conflito ABCDEF2 2026-01-02 03.04.05)"));
     }
 
     #[test]
@@ -457,7 +470,7 @@ mod tests {
                 for a in &actions {
                     match a {
                         FsAction::ArchiveToVersions { path } => archived.push(path),
-                        FsAction::Rename { from, to } => {
+                        FsAction::Rename { from, to } | FsAction::RenameUnique { from, to } => {
                             // overwriting the original destroys its content
                             if *to == c.original_path {
                                 assert!(archived.contains(&c.original_path.as_str()), "{n} {r:?}");

@@ -1,6 +1,5 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
-  <rect x="64" y="64" width="896" height="896" rx="200" fill="#0F1B2D"/>
-  <path d="M220 330h170l50 50h200a40 40 0 0 1 40 40v250a40 40 0 0 1-40 40H220a40 40 0 0 1-40-40V370a40 40 0 0 1 40-40z" fill="#3B82F6"/>
-  <path d="M384 430h170l50 50h200a40 40 0 0 1 40 40v250a40 40 0 0 1-40 40H384a40 40 0 0 1-40-40V470a40 40 0 0 1 40-40z" fill="#22C55E" fill-opacity="0.92"/>
-  <path d="M470 600a110 110 0 0 1 188-60l22-22v80h-80l30-30a70 70 0 0 0-120 32zm214 40a110 110 0 0 1-188 60l-22 22v-80h80l-30 30a70 70 0 0 0 120-32z" fill="#0F1B2D"/>
+  <!-- TwinFolders app icon: brand symbol on a black rounded square (macOS-style margin). -->
+  <rect x="64" y="64" width="896" height="896" rx="200" fill="#000000"/>
+  <g transform="translate(512 512) scale(1.18)"><g fill="none" stroke-linecap="round" stroke-linejoin="round" stroke-width="25"><path d="M-22-76V-106Q-22-126-42-126H-119L-153-160H-231Q-251-160-251-140V65Q-251 85-231 85H-75" stroke="#3B82F6"/><path d="M22 76V106Q22 126 42 126H119L153 160H231Q251 160 251 140V-65Q251-85 231-85H75" stroke="#22C55E"/></g><path transform="translate(0 -14)" d="M-162-38H54V-52L96-25 54 2V-12H-162Z" fill="#3B82F6"/><path transform="translate(0 14)" d="M162 38H-54V52L-96 25-54-2V12H162Z" fill="#22C55E"/></g>
 </svg>

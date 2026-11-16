@@ -23,7 +23,7 @@ export function warningsFor(r: PreflightReport): Warning[] {
     const n = r.invalidNamesTotal;
     out.push({
       title: `${n} ${n === 1 ? "nome" : "nomes"} que o Windows não aceita`,
-      text: "Esses itens não vão aparecer no Windows (o Syncthing mostra erro neles). Renomeie antes de compartilhar.",
+      text: "O Windows não consegue criar esses arquivos, então eles ficam só neste computador. Renomeie antes de compartilhar.",
       items: r.invalidNames.map((w) => `${w.path} — ${w.problem}`),
       blocking: true,
     });

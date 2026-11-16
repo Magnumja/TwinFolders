@@ -76,6 +76,8 @@ pub struct DeviceView {
 #[serde(rename_all = "camelCase")]
 pub struct Overview {
     pub my_id: String,
+    /// This computer's device name in Syncthing (defaults to the hostname).
+    pub my_name: String,
     pub devices: Vec<DeviceView>,
     pub folders: Vec<FolderView>,
     /// Devices asking to pair (need explicit approval).
@@ -277,10 +279,14 @@ pub fn collect(c: &SyncthingClient, prev: Option<&RateSample>) -> Result<(Overvi
                 .get(&fd.device_id)
                 .map(|c| c.connected)
                 .unwrap_or(false);
-            let completion = c
+            // Unknown completion (API error) is left out rather than shown
+            // as 0%, which would read as "syncing 0%" forever.
+            let Ok(completion) = c
                 .completion(&f.id, Some(&fd.device_id))
                 .map(|x: Completion| x.completion)
-                .unwrap_or(0.0);
+            else {
+                continue;
+            };
             peers.push(PeerProgress {
                 device_id: fd.device_id.clone(),
                 name: names.get(fd.device_id.as_str()).unwrap_or(&"").to_string(),
@@ -315,6 +321,7 @@ pub fn collect(c: &SyncthingClient, prev: Option<&RateSample>) -> Result<(Overvi
     let pending_folders = c.pending_folders().unwrap_or_default();
     Ok((
         Overview {
+            my_name: names.get(my_id.as_str()).copied().unwrap_or("").to_string(),
             my_id,
             devices,
             folders,
