@@ -2,6 +2,10 @@ import { useCallback, useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { disable, enable, isEnabled } from "@tauri-apps/plugin-autostart";
+import { ask } from "@tauri-apps/plugin-dialog";
+import { AddFolder } from "./components/AddFolder";
+import { IgnoreEditor } from "./components/IgnoreEditor";
+import { Pending } from "./components/Pending";
 import type { DeviceView, FolderView, Overview, Snapshot } from "./types";
 import { formatBytes, formatRate, relativeTime, shortId } from "./lib/format";
 import { describeHealth, overallStatus, type Tone } from "./lib/health";
@@ -12,7 +16,7 @@ function Dot({ tone }: { tone: Tone }) {
   return <span className={`dot dot-${tone}`} aria-hidden="true" />;
 }
 
-function Header({ overview }: { overview: Overview | null }) {
+function Header({ overview, onAdd }: { overview: Overview | null; onAdd: () => void }) {
   const [copied, setCopied] = useState(false);
   const status = overview ? overallStatus(overview) : null;
   const copy = async () => {
@@ -32,6 +36,9 @@ function Header({ overview }: { overview: Overview | null }) {
           <Dot tone={status.tone} />
           {status.label}
         </div>
+      )}
+      {overview && (
+        <button className="btn btn-primary" onClick={onAdd}>+ Adicionar pasta</button>
       )}
       {overview && (
         <button className="device-id" onClick={copy} title="Copiar o ID deste computador (use no outro para parear)">
@@ -67,7 +74,7 @@ function DeviceCard({ d }: { d: DeviceView }) {
   );
 }
 
-function FolderRow({ f }: { f: FolderView }) {
+function FolderRow({ f, onIgnores, onChange }: { f: FolderView; onIgnores: () => void; onChange: () => void }) {
   const h = describeHealth(f.health);
   const percent =
     f.health.kind === "syncing" ? f.health.percent : f.health.kind === "upToDate" || f.health.kind === "waitingForPeer" ? 100 : 0;
@@ -80,6 +87,26 @@ function FolderRow({ f }: { f: FolderView }) {
           <p className="muted small mono path" title={f.path}>{f.path}</p>
         </div>
         <span className={`tag tag-${h.tone}`}>{h.label}</span>
+      </div>
+      <div className="folder-actions">
+        <button className="link-btn" onClick={onIgnores}>Exclusões</button>
+        <button
+          className="link-btn danger"
+          onClick={async () => {
+            const ok = await ask(
+              `Parar de sincronizar "${f.label}"?\n\nOs arquivos continuam neste computador e no outro; só a sincronização é desligada.`,
+              { title: "Remover pasta da sincronização", kind: "warning", okLabel: "Parar de sincronizar", cancelLabel: "Cancelar" },
+            );
+            if (!ok) return;
+            try {
+              await invoke("remove_folder", { folderId: f.id });
+            } finally {
+              onChange();
+            }
+          }}
+        >
+          Remover
+        </button>
       </div>
       <div className={`bar bar-${h.tone}`} role="progressbar" aria-valuenow={percent} aria-valuemin={0} aria-valuemax={100}>
         <span style={{ width: `${percent}%` }} />
@@ -129,6 +156,8 @@ function AutostartToggle() {
 
 export default function App() {
   const [snap, setSnap] = useState<Snapshot | null>(null);
+  const [adding, setAdding] = useState(false);
+  const [editing, setEditing] = useState<FolderView | null>(null);
 
   const refresh = useCallback(async () => {
     try {
@@ -152,7 +181,7 @@ export default function App() {
 
   return (
     <div className="app">
-      <Header overview={overview} />
+      <Header overview={overview} onAdd={() => setAdding(true)} />
       <main>
         {!snap && <p className="muted">Conectando ao Syncthing local…</p>}
         {snap?.status === "notInstalled" && <Problem title="Serviço não instalado" message={snap.message} />}
@@ -161,6 +190,7 @@ export default function App() {
         )}
         {overview && (
           <>
+            <Pending overview={overview} onChange={refresh} />
             <section>
               <h2>Computadores</h2>
               {overview.devices.length === 0 ? (
@@ -174,12 +204,20 @@ export default function App() {
               {overview.folders.length === 0 ? (
                 <p className="muted">Nenhuma pasta sincronizada ainda.</p>
               ) : (
-                <div className="list">{overview.folders.map((f) => <FolderRow key={f.id} f={f} />)}</div>
+                <div className="list">
+                  {overview.folders.map((f) => (
+                    <FolderRow key={f.id} f={f} onIgnores={() => setEditing(f)} onChange={refresh} />
+                  ))}
+                </div>
               )}
             </section>
           </>
         )}
       </main>
+      {adding && overview && (
+        <AddFolder devices={overview.devices} onClose={() => setAdding(false)} onDone={() => { setAdding(false); refresh(); }} />
+      )}
+      {editing && <IgnoreEditor folder={editing} onClose={() => setEditing(null)} />}
       <footer className="footer">
         <AutostartToggle />
         <span className="muted small">A sincronização roda em segundo plano mesmo com esta janela fechada.</span>

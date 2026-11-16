@@ -15,7 +15,9 @@ use std::time::Instant;
 use serde::Serialize;
 use serde_json::Value;
 
-use crate::client::{Completion, Connection, FolderStatus, Result, SyncthingClient};
+use crate::client::{
+    Completion, Connection, FolderStatus, PendingDevice, PendingFolder, Result, SyncthingClient,
+};
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
 #[serde(tag = "kind", rename_all = "camelCase")]
@@ -76,6 +78,10 @@ pub struct Overview {
     pub my_id: String,
     pub devices: Vec<DeviceView>,
     pub folders: Vec<FolderView>,
+    /// Devices asking to pair (need explicit approval).
+    pub pending_devices: Vec<PendingDevice>,
+    /// Folders offered by a paired device (need explicit acceptance).
+    pub pending_folders: Vec<PendingFolder>,
 }
 
 /// Byte counters from the previous snapshot, for transfer rates.
@@ -305,11 +311,15 @@ pub fn collect(c: &SyncthingClient, prev: Option<&RateSample>) -> Result<(Overvi
     }
     folders.sort_by_key(|f| f.label.to_lowercase());
 
+    let pending_devices = c.pending_devices().unwrap_or_default();
+    let pending_folders = c.pending_folders().unwrap_or_default();
     Ok((
         Overview {
             my_id,
             devices,
             folders,
+            pending_devices,
+            pending_folders,
         },
         RateSample { at: now, totals },
     ))

@@ -34,6 +34,9 @@ pub enum Error {
     InvalidFolderId(String),
     /// TLS setup problem (bad pinned certificate, non-https URL).
     Tls(String),
+    /// Request timed out. For writes the outcome is unknown: Syncthing may
+    /// or may not have applied it, so re-read before retrying.
+    Timeout,
 }
 
 impl fmt::Display for Error {
@@ -46,6 +49,7 @@ impl fmt::Display for Error {
             Error::NotLoopback(u) => write!(f, "refusing non-loopback Syncthing address: {u}"),
             Error::InvalidFolderId(id) => write!(f, "invalid folder ID: {id:?}"),
             Error::Tls(e) => write!(f, "TLS: {e}"),
+            Error::Timeout => write!(f, "Syncthing did not answer in time"),
         }
     }
 }
@@ -174,7 +178,8 @@ impl Folder {
 
 // ---------- status types ----------
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct PendingDevice {
     pub device_id: String,
     pub name: String,
@@ -182,7 +187,8 @@ pub struct PendingDevice {
     pub time: String,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct PendingFolder {
     pub folder_id: String,
     pub offered_by: String,
@@ -276,6 +282,25 @@ const LONG_POLL_SLACK: Duration = Duration::from_secs(10);
 const DEFAULT_TIMEOUT: Duration = Duration::from_secs(10);
 
 type Response = ureq::http::Response<ureq::Body>;
+
+/// Distinguishes timeouts (outcome unknown for writes) from other
+/// transport failures (daemon not reachable).
+fn transport(e: ureq::Error) -> Error {
+    match e {
+        ureq::Error::Timeout(_) => Error::Timeout,
+        other => Error::Transport(other.to_string()),
+    }
+}
+
+/// `.stignore` content as Syncthing sees it.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
+pub struct Ignores {
+    #[serde(rename = "ignore", default)]
+    pub lines: Vec<String>,
+    /// Syncthing's parse error for the patterns, if any.
+    #[serde(default)]
+    pub error: Option<String>,
+}
 
 /// Max bytes of an error body kept for messages/logs.
 const MAX_ERROR_BODY: usize = 512;
@@ -410,7 +435,7 @@ impl SyncthingClient {
         for (k, v) in query {
             req = req.query(*k, *v);
         }
-        let resp = req.call().map_err(|e| Error::Transport(e.to_string()))?;
+        let resp = req.call().map_err(transport)?;
         let mut resp = Self::check(resp)?;
         resp.body_mut()
             .read_json::<T>()
@@ -431,7 +456,7 @@ impl SyncthingClient {
             .timeout_global(Some(DEFAULT_TIMEOUT))
             .build()
             .send_json(body)
-            .map_err(|e| Error::Transport(e.to_string()))?;
+            .map_err(transport)?;
         Self::check(resp).map(|_| ())
     }
 
@@ -446,9 +471,7 @@ impl SyncthingClient {
         for (k, v) in query {
             req = req.query(*k, *v);
         }
-        let resp = req
-            .send_empty()
-            .map_err(|e| Error::Transport(e.to_string()))?;
+        let resp = req.send_empty().map_err(transport)?;
         Self::check(resp).map(|_| ())
     }
 
@@ -490,6 +513,49 @@ impl SyncthingClient {
             });
         }
         self.get_json(path, &[], DEFAULT_TIMEOUT)
+    }
+
+    /// Removes a folder from Syncthing's config. Files on disk are NOT
+    /// deleted (Syncthing never deletes them on folder removal).
+    pub fn remove_folder(&self, id: &str) -> Result<()> {
+        validate_folder_id(id)?;
+        let resp = self
+            .agent
+            .delete(self.url(&format!("/rest/config/folders/{id}")))
+            .header("X-API-Key", &self.api_key)
+            .config()
+            .timeout_global(Some(DEFAULT_TIMEOUT))
+            .build()
+            .call()
+            .map_err(transport)?;
+        Self::check(resp).map(|_| ())
+    }
+
+    /// Current `.stignore` lines of a folder (via Syncthing, which also
+    /// reports pattern errors).
+    pub fn ignores(&self, folder: &str) -> Result<Ignores> {
+        validate_folder_id(folder)?;
+        self.get_json("/rest/db/ignores", &[("folder", folder)], DEFAULT_TIMEOUT)
+    }
+
+    /// Replaces a folder's `.stignore`; Syncthing writes the file and
+    /// applies it immediately. Check `error` in the result.
+    pub fn set_ignores(&self, folder: &str, lines: &[&str]) -> Result<Ignores> {
+        validate_folder_id(folder)?;
+        let resp = self
+            .agent
+            .post(self.url("/rest/db/ignores"))
+            .header("X-API-Key", &self.api_key)
+            .query("folder", folder)
+            .config()
+            .timeout_global(Some(DEFAULT_TIMEOUT))
+            .build()
+            .send_json(serde_json::json!({ "ignore": lines }))
+            .map_err(transport)?;
+        let mut resp = Self::check(resp)?;
+        resp.body_mut()
+            .read_json::<Ignores>()
+            .map_err(|e| Error::Decode(e.to_string()))
     }
 
     /// Asks Syncthing to exit cleanly (exit code 0).
@@ -646,5 +712,22 @@ impl SyncthingClient {
             &q,
             Duration::from_secs(timeout_s) + LONG_POLL_SLACK,
         )
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn timeouts_are_distinguished_from_unreachable() {
+        assert!(matches!(
+            transport(ureq::Error::Timeout(ureq::Timeout::Global)),
+            Error::Timeout
+        ));
+        assert!(matches!(
+            transport(ureq::Error::ConnectionFailed),
+            Error::Transport(_)
+        ));
     }
 }

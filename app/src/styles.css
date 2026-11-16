@@ -101,3 +101,36 @@ main { flex: 1; padding: 4px 24px 24px; max-width: 1000px; width: 100%; margin: 
 
 .footer { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; padding: 12px 24px; border-top: 1px solid var(--border); background: var(--surface); }
 .toggle { display: inline-flex; align-items: center; gap: 8px; cursor: pointer; }
+
+/* ---- slice 4.3: actions, forms, modals ---- */
+.btn { font: inherit; font-size: 13px; padding: 7px 14px; border-radius: 8px; border: 1px solid var(--border); background: var(--surface); color: var(--text); cursor: pointer; }
+.btn:hover:not(:disabled) { border-color: var(--busy); }
+.btn:disabled { opacity: 0.5; cursor: not-allowed; }
+.btn-primary { background: var(--busy); border-color: var(--busy); color: #fff; font-weight: 600; }
+.btn-primary:hover:not(:disabled) { filter: brightness(1.08); }
+.btn:focus-visible, .link-btn:focus-visible, .icon-btn:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-visible { outline: 2px solid var(--busy); outline-offset: 2px; }
+.link-btn { background: none; border: none; padding: 2px 0; font: inherit; font-size: 12px; color: var(--busy); cursor: pointer; }
+.link-btn.danger { color: var(--error); }
+.icon-btn { background: none; border: none; color: var(--muted); font-size: 16px; cursor: pointer; padding: 4px 8px; border-radius: 6px; }
+.folder-actions { display: flex; gap: 16px; margin-top: 6px; padding-left: 30px; }
+.pending { align-items: flex-start; border-color: color-mix(in srgb, var(--wait) 45%, var(--border)); }
+.pending p { margin: 4px 0 0; }
+
+.overlay { position: fixed; inset: 0; background: rgb(0 0 0 / 0.45); display: grid; place-items: center; padding: 24px; z-index: 10; }
+.modal { background: var(--surface); border: 1px solid var(--border); border-radius: 14px; width: min(620px, 100%); max-height: calc(100vh - 48px); overflow: auto; padding: 18px 20px 20px; box-shadow: 0 20px 60px rgb(0 0 0 / 0.35); }
+.modal:focus { outline: none; }
+.modal-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; }
+.modal-head h2 { margin: 0; font-size: 16px; text-transform: none; letter-spacing: 0; color: var(--text); }
+.form { display: flex; flex-direction: column; gap: 14px; }
+.field { display: flex; flex-direction: column; gap: 6px; }
+.field-label { font-size: 12px; font-weight: 600; color: var(--muted); }
+input, select, textarea { font: inherit; padding: 8px 10px; border-radius: 8px; border: 1px solid var(--border); background: var(--bg); color: var(--text); }
+textarea.editor { font-size: 12.5px; line-height: 1.5; resize: vertical; }
+.path-box { padding: 8px 10px; border-radius: 8px; background: var(--bg); border: 1px solid var(--border); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; }
+.notice { border-radius: 10px; padding: 10px 12px; border: 1px solid; }
+.notice p { margin: 4px 0 0; }
+.notice ul { margin: 6px 0 0; padding-left: 18px; }
+.notice-error { border-color: color-mix(in srgb, var(--error) 40%, transparent); background: color-mix(in srgb, var(--error) 7%, transparent); }
+.notice-wait { border-color: color-mix(in srgb, var(--wait) 40%, transparent); background: color-mix(in srgb, var(--wait) 7%, transparent); }
+.ok-text { color: var(--ok); margin: 0; }
+.actions { display: flex; justify-content: flex-end; gap: 10px; margin-top: 4px; }

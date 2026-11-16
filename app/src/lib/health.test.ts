@@ -13,7 +13,7 @@ describe("describeHealth", () => {
   });
 });
 
-const base: Overview = { myId: "ME", devices: [], folders: [] };
+const base: Overview = { myId: "ME", devices: [], folders: [], pendingDevices: [], pendingFolders: [] };
 const folder = (kind: string, extra: object = {}) => ({
   id: kind, label: kind, path: "/x", needBytes: 0, globalBytes: 0, peers: [], lastSync: null,
   health: { kind, ...extra } as never,

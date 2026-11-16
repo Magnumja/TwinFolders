@@ -6,6 +6,7 @@ pub mod guitls;
 pub mod names;
 pub mod overview;
 pub mod pairing;
+pub mod preflight;
 pub mod secrets;
 pub mod service;
 pub mod stconfig;

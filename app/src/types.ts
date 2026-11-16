@@ -37,10 +37,45 @@ export interface DeviceView {
   outRate: number;
 }
 
+export interface PendingDevice {
+  deviceId: string;
+  name: string;
+  address: string;
+  time: string;
+}
+
+export interface PendingFolder {
+  folderId: string;
+  offeredBy: string;
+  label: string;
+  time: string;
+}
+
 export interface Overview {
   myId: string;
   devices: DeviceView[];
   folders: FolderView[];
+  pendingDevices: PendingDevice[];
+  pendingFolders: PendingFolder[];
+}
+
+export type CloudProvider = "iCloud" | "oneDrive" | "dropbox" | "googleDrive" | "other";
+
+/** core::preflight::Report */
+export interface PreflightReport {
+  entriesScanned: number;
+  truncated: boolean;
+  invalidNames: { path: string; problem: string }[];
+  invalidNamesTotal: number;
+  caseCollisions: string[][];
+  cloud: CloudProvider | null;
+  cloudOnlyFiles: number;
+  symlinks: number;
+}
+
+export interface Ignores {
+  lines: string[];
+  error: string | null;
 }
 
 export type Snapshot =

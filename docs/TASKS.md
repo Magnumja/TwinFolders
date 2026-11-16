@@ -41,7 +41,7 @@ Legenda: 🤖 roda em agente paralelo · 🔎 verificar docs oficiais antes · �
 |---|---|---|
 | ✅ 4.1 | Tauri v2: tray/barra de menus, painel, autostart | screenshot Mac |
 | ✅ 4.2 | 🤖 Painel pastas × dispositivos, %, velocidade, última sync, "aguardando o outro computador" | teste de componente + screenshot |
-| 4.3 | Adicionar/remover pasta, editor `.stignore`, avisos do validador e OneDrive/iCloud | teste + screenshot |
+| ✅ 4.3 | Adicionar/remover pasta, editor `.stignore`, avisos do validador e OneDrive/iCloud | teste + screenshot |
 
 ## Fatia 5 — Conflitos e versionamento
 | # | Tarefa | Evidência |
@@ -74,8 +74,8 @@ Legenda: 🤖 roda em agente paralelo · 🔎 verificar docs oficiais antes · �
 | Origem | Item | Fatia |
 |---|---|---|
 | Código #4 | Após reinício do daemon os IDs de evento recomeçam → o app reconecta e recomeça do evento 0 ao perder a conexão | ✅ 4.2 |
-| Código #5 | Distinguir `Timeout` de `Connect` em escritas (resultado indeterminado) | 4.2 |
-| Código #7 | `(?i)` nos arquivos de sistema do `.stignore`; avisar na UI que `build/dist/target` são ignorados em qualquer nível | 4.3 |
+| Código #5 | Distinguir `Timeout` de `Connect` em escritas (resultado indeterminado) → `Error::Timeout` | ✅ 4.3 |
+| Código #7 | `(?i)` nos padrões: **não é preciso** — o Syncthing aplica `(?i)` sozinho em sistemas de arquivos que ignoram maiúsculas (Mac/Windows), visto na API real | ✅ 4.3 |
 | Segurança #1 | Executor de conflitos: rename sem sobrescrever (`RENAME_NOREPLACE`/`MoveFileEx` sem replace), não seguir symlinks, KeepBoth com nome único | 5.2 |
 | Segurança #5 | Em produção passar a API key por `STGUIAPIKEY`/config.xml (0600), nunca por argv; config.xml guarda a key em texto puro | 3.3 |
 | Código #9/#10 | Robustez dos testes: portas (TOCTOU) e `wait_idle` logo após `scan` | contínuo |

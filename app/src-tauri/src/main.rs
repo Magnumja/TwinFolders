@@ -14,8 +14,10 @@ use serde::Serialize;
 use tauri::menu::{Menu, MenuItem};
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
 use tauri::{AppHandle, Emitter, Manager, State, WindowEvent};
-use twinfolders_core::client::SyncthingClient;
+use twinfolders_core::client::{Ignores, PendingDevice, PendingFolder, SyncthingClient};
 use twinfolders_core::overview::{self, Overview, RateSample};
+use twinfolders_core::pairing::{self, ShareRequest};
+use twinfolders_core::preflight;
 use twinfolders_core::service::{self, ServiceConfig};
 use twinfolders_core::{secrets, stconfig};
 
@@ -133,6 +135,147 @@ async fn get_overview(state: State<'_, Arc<AppState>>) -> Result<Snapshot, Strin
         .map_err(|e| e.to_string())
 }
 
+/// Runs `f` with the connected client on a worker thread.
+async fn with_client<T: Send + 'static>(
+    state: &Arc<AppState>,
+    f: impl FnOnce(&SyncthingClient) -> Result<T, String> + Send + 'static,
+) -> Result<T, String> {
+    let st = state.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let c = cached_client(&st).map_err(|s| match s {
+            Snapshot::NotInstalled { message } | Snapshot::NotRunning { message } => message,
+            Snapshot::Ok { .. } => unreachable!(),
+        })?;
+        f(&c)
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+/// Explicit user approval of a device that asked to pair.
+#[tauri::command]
+async fn approve_device(
+    state: State<'_, Arc<AppState>>,
+    device_id: String,
+    name: String,
+) -> Result<(), String> {
+    with_client(state.inner(), move |c| {
+        let pending = PendingDevice {
+            device_id,
+            name,
+            address: String::new(),
+            time: String::new(),
+        };
+        pairing::approve_device(c, &pending, None).map_err(|e| e.to_string())
+    })
+    .await
+}
+
+/// Pre-share check of a local folder (Windows-invalid names, case
+/// collisions, cloud-only placeholders, symlinks).
+#[tauri::command]
+async fn scan_folder(path: String) -> Result<preflight::Report, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        preflight::scan(std::path::Path::new(&path)).map_err(|e| e.to_string())
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+/// Shares a local folder with one paired device. Returns the folder ID.
+#[tauri::command]
+async fn share_folder(
+    state: State<'_, Arc<AppState>>,
+    path: String,
+    label: String,
+    peer_id: String,
+    extra_ignores: Vec<String>,
+) -> Result<String, String> {
+    with_client(state.inner(), move |c| {
+        let local_id = c.my_id().map_err(|e| e.to_string())?;
+        let existing: Vec<String> = c
+            .folders()
+            .map_err(|e| e.to_string())?
+            .into_iter()
+            .map(|f| f.id)
+            .collect();
+        let id = pairing::folder_id_for(&label, &existing);
+        let extras: Vec<&str> = extra_ignores.iter().map(String::as_str).collect();
+        pairing::share_folder(
+            c,
+            &ShareRequest {
+                id: &id,
+                label: &label,
+                path: std::path::Path::new(&path),
+                local_id: &local_id,
+                peer_id: &peer_id,
+                extra_ignores: &extras,
+            },
+        )
+        .map_err(|e| e.to_string())?;
+        Ok(id)
+    })
+    .await
+}
+
+/// Accepts a folder offered by a paired device, stored at `path` here.
+#[tauri::command]
+async fn accept_folder(
+    state: State<'_, Arc<AppState>>,
+    folder_id: String,
+    offered_by: String,
+    label: String,
+    path: String,
+) -> Result<(), String> {
+    with_client(state.inner(), move |c| {
+        let local_id = c.my_id().map_err(|e| e.to_string())?;
+        let offer = PendingFolder {
+            folder_id,
+            offered_by,
+            label,
+            time: String::new(),
+        };
+        pairing::accept_folder(c, &offer, &local_id, std::path::Path::new(&path))
+            .map(|_| ())
+            .map_err(|e| e.to_string())
+    })
+    .await
+}
+
+/// Stops syncing a folder. Files on disk are kept.
+#[tauri::command]
+async fn remove_folder(state: State<'_, Arc<AppState>>, folder_id: String) -> Result<(), String> {
+    with_client(state.inner(), move |c| {
+        c.remove_folder(&folder_id).map_err(|e| e.to_string())
+    })
+    .await
+}
+
+#[tauri::command]
+async fn get_ignores(
+    state: State<'_, Arc<AppState>>,
+    folder_id: String,
+) -> Result<Ignores, String> {
+    with_client(state.inner(), move |c| {
+        c.ignores(&folder_id).map_err(|e| e.to_string())
+    })
+    .await
+}
+
+/// Saves `.stignore` text; Syncthing validates it (see `error` in result).
+#[tauri::command]
+async fn set_ignores(
+    state: State<'_, Arc<AppState>>,
+    folder_id: String,
+    text: String,
+) -> Result<Ignores, String> {
+    with_client(state.inner(), move |c| {
+        let lines: Vec<&str> = text.lines().collect();
+        c.set_ignores(&folder_id, &lines).map_err(|e| e.to_string())
+    })
+    .await
+}
+
 /// Long-polls Syncthing events and tells the UI to refresh. Survives daemon
 /// restarts: on error it reconnects and restarts from event 0, and if IDs go
 /// backwards (new daemon process) it resynchronizes.
@@ -187,7 +330,17 @@ fn main() {
             Some(vec!["--minimized"]),
         ))
         .manage(state)
-        .invoke_handler(tauri::generate_handler![get_overview])
+        .plugin(tauri_plugin_dialog::init())
+        .invoke_handler(tauri::generate_handler![
+            get_overview,
+            approve_device,
+            scan_folder,
+            share_folder,
+            accept_folder,
+            remove_folder,
+            get_ignores,
+            set_ignores
+        ])
         .setup(|app| {
             let open = MenuItem::with_id(app, "open", "Abrir painel", true, None::<&str>)?;
             let quit = MenuItem::with_id(app, "quit", "Sair do TwinFolders", true, None::<&str>)?;

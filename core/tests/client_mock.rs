@@ -332,3 +332,61 @@ fn accepting_an_offer_never_overwrites_an_existing_folder() {
     put.assert();
     let _ = std::fs::remove_dir_all(dir);
 }
+
+// ---------- slice 4.3: folder removal and ignores ----------
+
+#[test]
+fn remove_folder_sends_delete_and_validates_id() {
+    let mut s = Server::new();
+    let m = s
+        .mock("DELETE", "/rest/config/folders/twin-docs")
+        .match_header("X-API-Key", KEY)
+        .create();
+    client(&s).remove_folder("twin-docs").unwrap();
+    m.assert();
+    let none = s.mock("DELETE", Matcher::Any).expect(0).create();
+    assert!(matches!(
+        client(&s).remove_folder("../options"),
+        Err(Error::InvalidFolderId(_))
+    ));
+    none.assert();
+}
+
+#[test]
+fn ignores_roundtrip_through_rest() {
+    let mut s = Server::new();
+    s.mock("GET", "/rest/db/ignores")
+        .match_query(Matcher::UrlEncoded("folder".into(), "twin-docs".into()))
+        .with_body(r#"{"ignore":["// TwinFolders default","node_modules"],"expanded":["(?i)node_modules"],"error":null}"#)
+        .create();
+    let got = client(&s).ignores("twin-docs").unwrap();
+    assert_eq!(got.lines, vec!["// TwinFolders default", "node_modules"]);
+    assert_eq!(got.error, None);
+
+    let post = s
+        .mock("POST", "/rest/db/ignores")
+        .match_query(Matcher::UrlEncoded("folder".into(), "twin-docs".into()))
+        .match_body(Matcher::Json(
+            serde_json::json!({"ignore": ["node_modules", "*.psd"]}),
+        ))
+        .with_body(r#"{"ignore":["node_modules","*.psd"],"expanded":[],"error":"bad pattern: [*"}"#)
+        .create();
+    let saved = client(&s)
+        .set_ignores("twin-docs", &["node_modules", "*.psd"])
+        .unwrap();
+    post.assert();
+    assert_eq!(saved.error.as_deref(), Some("bad pattern: [*"));
+}
+
+#[test]
+fn ignores_validate_folder_id() {
+    let s = Server::new();
+    assert!(matches!(
+        client(&s).ignores("a b"),
+        Err(Error::InvalidFolderId(_))
+    ));
+    assert!(matches!(
+        client(&s).set_ignores("x?y", &[]),
+        Err(Error::InvalidFolderId(_))
+    ));
+}
