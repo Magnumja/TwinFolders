@@ -81,20 +81,23 @@ fn provisioned_home_is_hardened_and_daemon_applies_it() {
 
     let c = SyncthingClient::new(&cfg.gui_url(), &gui.api_key).unwrap();
     wait_until(Duration::from_secs(30), "daemon up", || c.ping().is_ok());
-    assert!(
-        service::listener_is_ours(&cfg),
-        "our syncthing owns the GUI port"
-    );
+    // The listener-ownership check exists only on the supported desktop OSes.
+    if Os::current().is_some() {
+        assert!(
+            service::listener_is_ours(&cfg),
+            "our syncthing owns the GUI port"
+        );
 
-    // A squatter on another port is not "ours": the key must not be sent.
-    let squatter = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
-    let mut fake = cfg.clone();
-    fake.gui_port = squatter.local_addr().unwrap().port();
-    assert!(
-        !service::listener_is_ours(&fake),
-        "foreign listener rejected"
-    );
-    eprintln!("EVIDENCE: listener check ours=true squatter=false");
+        // A squatter on another port is not "ours": the key must not be sent.
+        let squatter = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let mut fake = cfg.clone();
+        fake.gui_port = squatter.local_addr().unwrap().port();
+        assert!(
+            !service::listener_is_ours(&fake),
+            "foreign listener rejected"
+        );
+        eprintln!("EVIDENCE: listener check ours=true squatter=false");
+    }
 
     // Check the live options through REST, not just the file.
     let opts = get_json(&cfg.gui_url(), &gui.api_key, "/rest/config/options");
