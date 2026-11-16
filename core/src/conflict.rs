@@ -50,8 +50,14 @@ fn days_in_month(y: u32, m: u32) -> u32 {
 /// case-insensitive by default.
 const CONTROL_NAMES: &[&str] = &[".stignore", ".stfolder", ".stversions"];
 
+/// Defense in depth; the executor must still canonicalize real paths
+/// (slice 5). Unicode uppercase catches NTFS-equivalent spellings such as
+/// `.ſtignore` (U+017F uppercases to `S`), and `.ST…~N` catches 8.3 short
+/// names like `.STIGN~1`.
 fn is_control_component(c: &str) -> bool {
-    CONTROL_NAMES.iter().any(|n| n.eq_ignore_ascii_case(c))
+    let up = c.to_uppercase();
+    CONTROL_NAMES.iter().any(|n| n.to_uppercase() == up)
+        || (up.starts_with(".ST") && up.contains('~'))
 }
 
 /// Peer-controlled names reach the conflict planner, so only plain relative
@@ -517,5 +523,21 @@ mod tests {
         ] {
             assert_eq!(parse(&p), None, "{p:?}");
         }
+    }
+
+    #[test]
+    fn unicode_and_short_name_spellings_of_control_files_are_rejected() {
+        let tail = ".sync-conflict-20261116-143005-ABCDEF2";
+        for p in [
+            format!(".\u{17f}tignore{tail}"),
+            format!(".STIGN~1{tail}"),
+            format!(".stver~2/a{tail}.txt"),
+        ] {
+            assert_eq!(parse(&p), None, "{p:?}");
+        }
+        assert!(
+            parse(&format!("~backup{tail}.txt")).is_some(),
+            "ordinary ~ names still fine"
+        );
     }
 }
