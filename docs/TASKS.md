@@ -32,7 +32,7 @@ Legenda: 🤖 roda em agente paralelo · 🔎 verificar docs oficiais antes · �
 | # | Tarefa | Evidência |
 |---|---|---|
 | ✅ 3.1 | 🤖 LaunchAgent + install/uninstall (Mac) | `launchctl print` |
-| 3.2 | 🤖 Task Scheduler "ao logon" (gerado em Rust, registrado via PowerShell) | job `windows-service` no CI registra/inicia/remove de verdade; gatilho de logon e reboot 🖐 |
+| ✅ 3.2 | 🤖 Task Scheduler "ao logon" (gerado em Rust, registrado via PowerShell) | **verificado no CI (Windows Server 2025)**: tarefa Running, GUI só em 127.0.0.1:8385, sem API key na linha de comando, uninstall mantém dados. Gatilho de logon e reboot ainda 🖐 |
 | ✅ 3.3 | GUI em 127.0.0.1; API key → Keychain/Credential Manager | teste + 🖐 Windows |
 | 3.4 | Reboot mantém sync sem abrir o app | 🖐 |
 
