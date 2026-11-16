@@ -68,10 +68,32 @@ jobs:
         run: cargo fmt --all --check
 
       - name: clippy
-        run: cargo clippy --workspace --all-targets -- -D warnings
+        run: cargo clippy --workspace --exclude twinfolders-app --all-targets -- -D warnings
 
       - name: test
-        run: cargo test --workspace -- --nocapture
+        run: cargo test --workspace --exclude twinfolders-app -- --nocapture
+
+  app:
+    name: app (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: dtolnay/rust-toolchain@39008827e6b4319a349e9a42dfc90579dd25f1ca # stable
+        with:
+          components: clippy
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+      - name: frontend (tests, typecheck, build)
+        working-directory: app
+        run: |
+          npm ci
+          npm test
+          npm run build
+      - name: clippy (Tauri crate)
+        run: cargo clippy -p twinfolders-app --all-targets -- -D warnings
 
   windows-service:
     name: service install/uninstall (Windows Task Scheduler, live)

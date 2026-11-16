@@ -5,3 +5,7 @@ dist/
 Thumbs.db
 *.log
 /core/tests/.tmp/
+app/node_modules/
+app/dist/
+app/src-tauri/gen/
+app/npm-install.log

@@ -4,6 +4,7 @@ pub mod client;
 pub mod conflict;
 pub mod guitls;
 pub mod names;
+pub mod overview;
 pub mod pairing;
 pub mod secrets;
 pub mod service;

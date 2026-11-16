@@ -659,7 +659,7 @@ fn platform_stop(os: Os) -> Result<()> {
         }
         Os::Windows => {
             let script = format!(
-                "$t = Get-ScheduledTask -TaskPath {p} -TaskName {n} -ErrorAction SilentlyContinue; if ($t) {{ Stop-ScheduledTask -InputObject $t }}",
+                "$t = Get-ScheduledTask -TaskPath {p} -TaskName {n} -ErrorAction SilentlyContinue; if ($t) {{ Stop-ScheduledTask -InputObject $t }}; exit 0",
                 p = ps_quote(WINDOWS_TASK_PATH),
                 n = ps_quote(WINDOWS_TASK_NAME)
             );
@@ -707,7 +707,7 @@ fn platform_unregister(os: Os) -> Result<()> {
         }
         Os::Windows => {
             let script = format!(
-                "Unregister-ScheduledTask -TaskPath {p} -TaskName {n} -Confirm:$false -ErrorAction SilentlyContinue",
+                "Unregister-ScheduledTask -TaskPath {p} -TaskName {n} -Confirm:$false -ErrorAction SilentlyContinue; exit 0",
                 p = ps_quote(WINDOWS_TASK_PATH),
                 n = ps_quote(WINDOWS_TASK_NAME)
             );
@@ -730,7 +730,7 @@ fn platform_status(os: Os) -> Result<(bool, bool, Option<u32>)> {
         }
         Os::Windows => {
             let script = format!(
-                "$t = Get-ScheduledTask -TaskPath {p} -TaskName {n} -ErrorAction SilentlyContinue; if ($t) {{ $t.State }} else {{ 'Missing' }}",
+                "$t = Get-ScheduledTask -TaskPath {p} -TaskName {n} -ErrorAction SilentlyContinue; if ($t) {{ $t.State }} else {{ 'Missing' }}; exit 0",
                 p = ps_quote(WINDOWS_TASK_PATH),
                 n = ps_quote(WINDOWS_TASK_NAME)
             );
@@ -876,6 +876,21 @@ mod tests {
             parse_launchctl_print("state = not running\n"),
             (false, None)
         );
+    }
+
+    /// A missing task (first install) must not fail the best-effort
+    /// PowerShell steps: `-ErrorAction SilentlyContinue` still leaves `$?`
+    /// false, so each tolerant script ends with `exit 0` (seen in CI).
+    #[test]
+    fn tolerant_powershell_scripts_exit_zero() {
+        let src = include_str!("service.rs");
+        for marker in [
+            "Stop-ScheduledTask -InputObject $t }}; exit 0",
+            "SilentlyContinue; exit 0\",",
+            "'Missing' }}; exit 0",
+        ] {
+            assert!(src.contains(marker), "missing: {marker}");
+        }
     }
 
     #[test]
