@@ -1,0 +1,534 @@
+//! Minimal, typed client for the Syncthing v2 REST API.
+//!
+//! Endpoint shapes were checked against a live Syncthing v2.1.7 daemon and
+//! <https://docs.syncthing.net/dev/rest.html>. Only the fields TwinFolders
+//! needs are typed; config objects keep every other field in `extra` so a
+//! read-modify-write never drops settings we don't know about.
+//!
+//! The API key is sent as the `X-API-Key` header and is never printed by
+//! `Debug`.
+
+use std::collections::{BTreeMap, HashMap};
+use std::fmt;
+use std::time::Duration;
+
+use serde::de::DeserializeOwned;
+use serde::{Deserialize, Serialize};
+use serde_json::{Map, Value};
+
+/// Errors returned by [`SyncthingClient`].
+#[derive(Debug)]
+pub enum Error {
+    /// 401/403: missing or wrong API key.
+    Unauthorized,
+    /// Any other non-2xx status.
+    Http { status: u16, body: String },
+    /// Connection refused, timeout, DNS, etc. (daemon not running).
+    Transport(String),
+    /// Response body was not the JSON we expected.
+    Decode(String),
+}
+
+impl fmt::Display for Error {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Error::Unauthorized => write!(f, "Syncthing rejected the API key"),
+            Error::Http { status, body } => write!(f, "Syncthing HTTP {status}: {body}"),
+            Error::Transport(e) => write!(f, "cannot reach Syncthing: {e}"),
+            Error::Decode(e) => write!(f, "unexpected Syncthing response: {e}"),
+        }
+    }
+}
+
+impl std::error::Error for Error {}
+
+pub type Result<T> = std::result::Result<T, Error>;
+
+// ---------- config types ----------
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Device {
+    #[serde(rename = "deviceID")]
+    pub device_id: String,
+    #[serde(default)]
+    pub name: String,
+    #[serde(default)]
+    pub addresses: Vec<String>,
+    #[serde(default)]
+    pub paused: bool,
+    #[serde(default)]
+    pub auto_accept_folders: bool,
+    #[serde(flatten)]
+    pub extra: Map<String, Value>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct FolderDevice {
+    #[serde(rename = "deviceID")]
+    pub device_id: String,
+    #[serde(flatten)]
+    pub extra: Map<String, Value>,
+}
+
+impl FolderDevice {
+    pub fn new(device_id: &str) -> Self {
+        Self {
+            device_id: device_id.to_string(),
+            extra: Map::new(),
+        }
+    }
+}
+
+/// Folder versioning ("lixeira"). `kind` is one of `trashcan`, `simple`,
+/// `staggered`, `external`, or empty for none. Param values are strings in
+/// Syncthing's config.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct Versioning {
+    #[serde(rename = "type", default)]
+    pub kind: String,
+    #[serde(default)]
+    pub params: BTreeMap<String, String>,
+    #[serde(flatten)]
+    pub extra: Map<String, Value>,
+}
+
+impl Versioning {
+    /// Staggered versioning keeping versions for `days` days.
+    pub fn staggered_days(days: u32) -> Self {
+        let mut params = BTreeMap::new();
+        params.insert("maxAge".into(), (u64::from(days) * 86_400).to_string());
+        Self {
+            kind: "staggered".into(),
+            params,
+            extra: Map::new(),
+        }
+    }
+
+    /// Trash can versioning, deleting old versions after `days` days (0 = never).
+    pub fn trashcan_days(days: u32) -> Self {
+        let mut params = BTreeMap::new();
+        params.insert("cleanoutDays".into(), days.to_string());
+        Self {
+            kind: "trashcan".into(),
+            params,
+            extra: Map::new(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Folder {
+    pub id: String,
+    #[serde(default)]
+    pub label: String,
+    pub path: String,
+    #[serde(rename = "type", default = "default_folder_type")]
+    pub kind: String,
+    #[serde(default)]
+    pub devices: Vec<FolderDevice>,
+    #[serde(default)]
+    pub paused: bool,
+    #[serde(default)]
+    pub versioning: Versioning,
+    #[serde(flatten)]
+    pub extra: Map<String, Value>,
+}
+
+fn default_folder_type() -> String {
+    "sendreceive".into()
+}
+
+impl Folder {
+    /// A send-receive folder shared with `device_ids` (include the local ID).
+    pub fn new(id: &str, label: &str, path: &str, device_ids: &[&str]) -> Self {
+        Self {
+            id: id.into(),
+            label: label.into(),
+            path: path.into(),
+            kind: default_folder_type(),
+            devices: device_ids.iter().map(|d| FolderDevice::new(d)).collect(),
+            paused: false,
+            versioning: Versioning::default(),
+            extra: Map::new(),
+        }
+    }
+
+    pub fn with_versioning(mut self, v: Versioning) -> Self {
+        self.versioning = v;
+        self
+    }
+}
+
+// ---------- status types ----------
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct PendingDevice {
+    pub device_id: String,
+    pub name: String,
+    pub address: String,
+    pub time: String,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct PendingFolder {
+    pub folder_id: String,
+    pub offered_by: String,
+    pub label: String,
+    pub time: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Completion {
+    pub completion: f64,
+    #[serde(default)]
+    pub global_bytes: u64,
+    #[serde(default)]
+    pub need_bytes: u64,
+    #[serde(default)]
+    pub need_items: u64,
+    #[serde(default)]
+    pub need_deletes: u64,
+    #[serde(default)]
+    pub remote_state: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FolderStatus {
+    /// idle, scanning, scan-waiting, syncing, sync-waiting, sync-preparing, cleaning, error, ...
+    pub state: String,
+    #[serde(default)]
+    pub need_bytes: u64,
+    #[serde(default)]
+    pub global_bytes: u64,
+    #[serde(default)]
+    pub in_sync_bytes: u64,
+    #[serde(default)]
+    pub errors: u64,
+    #[serde(default)]
+    pub pull_errors: u64,
+    #[serde(default)]
+    pub state_changed: Option<String>,
+    #[serde(default)]
+    pub error: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+pub struct Event {
+    pub id: u64,
+    #[serde(rename = "type")]
+    pub kind: String,
+    pub time: String,
+    #[serde(default)]
+    pub data: Value,
+}
+
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Connection {
+    #[serde(default)]
+    pub connected: bool,
+    #[serde(default)]
+    pub paused: bool,
+    #[serde(default)]
+    pub address: String,
+    #[serde(default)]
+    pub in_bytes_total: u64,
+    #[serde(default)]
+    pub out_bytes_total: u64,
+}
+
+// ---------- client ----------
+
+/// Blocking client. Cheap to clone; safe to use from a worker thread.
+#[derive(Clone)]
+pub struct SyncthingClient {
+    base: String,
+    api_key: String,
+    agent: ureq::Agent,
+}
+
+impl fmt::Debug for SyncthingClient {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("SyncthingClient")
+            .field("base", &self.base)
+            .field("api_key", &"<redacted>")
+            .finish()
+    }
+}
+
+/// Extra time allowed on top of a long-poll timeout before giving up.
+const LONG_POLL_SLACK: Duration = Duration::from_secs(10);
+const DEFAULT_TIMEOUT: Duration = Duration::from_secs(10);
+
+type Response = ureq::http::Response<ureq::Body>;
+
+impl SyncthingClient {
+    /// `base_url` like `http://127.0.0.1:8384`.
+    pub fn new(base_url: &str, api_key: &str) -> Self {
+        let config = ureq::Agent::config_builder()
+            .http_status_as_error(false)
+            .timeout_connect(Some(Duration::from_secs(3)))
+            .build();
+        Self {
+            base: base_url.trim_end_matches('/').to_string(),
+            api_key: api_key.to_string(),
+            agent: ureq::Agent::new_with_config(config),
+        }
+    }
+
+    fn url(&self, path: &str) -> String {
+        format!("{}{}", self.base, path)
+    }
+
+    fn check(mut resp: Response) -> Result<Response> {
+        let status = resp.status().as_u16();
+        match status {
+            200..=299 => Ok(resp),
+            401 | 403 => Err(Error::Unauthorized),
+            _ => {
+                let body = resp.body_mut().read_to_string().unwrap_or_default();
+                Err(Error::Http { status, body })
+            }
+        }
+    }
+
+    fn get_json<T: DeserializeOwned>(
+        &self,
+        path: &str,
+        query: &[(&str, &str)],
+        timeout: Duration,
+    ) -> Result<T> {
+        let mut req = self
+            .agent
+            .get(self.url(path))
+            .header("X-API-Key", &self.api_key)
+            .config()
+            .timeout_global(Some(timeout))
+            .build();
+        for (k, v) in query {
+            req = req.query(*k, *v);
+        }
+        let resp = req.call().map_err(|e| Error::Transport(e.to_string()))?;
+        let mut resp = Self::check(resp)?;
+        resp.body_mut()
+            .read_json::<T>()
+            .map_err(|e| Error::Decode(e.to_string()))
+    }
+
+    fn send_json(&self, method: &str, path: &str, body: &impl Serialize) -> Result<()> {
+        let url = self.url(path);
+        let req = match method {
+            "POST" => self.agent.post(url),
+            "PUT" => self.agent.put(url),
+            "PATCH" => self.agent.patch(url),
+            _ => unreachable!("unsupported method {method}"),
+        };
+        let resp = req
+            .header("X-API-Key", &self.api_key)
+            .config()
+            .timeout_global(Some(DEFAULT_TIMEOUT))
+            .build()
+            .send_json(body)
+            .map_err(|e| Error::Transport(e.to_string()))?;
+        Self::check(resp).map(|_| ())
+    }
+
+    fn post_empty(&self, path: &str, query: &[(&str, &str)]) -> Result<()> {
+        let mut req = self
+            .agent
+            .post(self.url(path))
+            .header("X-API-Key", &self.api_key)
+            .config()
+            .timeout_global(Some(DEFAULT_TIMEOUT))
+            .build();
+        for (k, v) in query {
+            req = req.query(*k, *v);
+        }
+        let resp = req
+            .send_empty()
+            .map_err(|e| Error::Transport(e.to_string()))?;
+        Self::check(resp).map(|_| ())
+    }
+
+    // ----- system -----
+
+    pub fn ping(&self) -> Result<()> {
+        self.get_json::<Value>("/rest/system/ping", &[], DEFAULT_TIMEOUT)
+            .map(|_| ())
+    }
+
+    /// This device's ID.
+    pub fn my_id(&self) -> Result<String> {
+        #[derive(Deserialize)]
+        struct S {
+            #[serde(rename = "myID")]
+            my_id: String,
+        }
+        Ok(self
+            .get_json::<S>("/rest/system/status", &[], DEFAULT_TIMEOUT)?
+            .my_id)
+    }
+
+    pub fn connections(&self) -> Result<HashMap<String, Connection>> {
+        #[derive(Deserialize)]
+        struct C {
+            connections: HashMap<String, Connection>,
+        }
+        Ok(self
+            .get_json::<C>("/rest/system/connections", &[], DEFAULT_TIMEOUT)?
+            .connections)
+    }
+
+    pub fn pause_device(&self, device_id: &str) -> Result<()> {
+        self.post_empty("/rest/system/pause", &[("device", device_id)])
+    }
+
+    pub fn resume_device(&self, device_id: &str) -> Result<()> {
+        self.post_empty("/rest/system/resume", &[("device", device_id)])
+    }
+
+    // ----- config -----
+
+    pub fn devices(&self) -> Result<Vec<Device>> {
+        self.get_json("/rest/config/devices", &[], DEFAULT_TIMEOUT)
+    }
+
+    /// Adds (or replaces) a device. Never enables auto-accept: folders from
+    /// the peer must be approved explicitly.
+    pub fn add_device(&self, device_id: &str, name: &str, addresses: &[&str]) -> Result<()> {
+        let addrs: Vec<&str> = if addresses.is_empty() {
+            vec!["dynamic"]
+        } else {
+            addresses.to_vec()
+        };
+        let body = serde_json::json!({
+            "deviceID": device_id,
+            "name": name,
+            "addresses": addrs,
+            "autoAcceptFolders": false,
+        });
+        self.send_json("POST", "/rest/config/devices", &body)
+    }
+
+    pub fn folders(&self) -> Result<Vec<Folder>> {
+        self.get_json("/rest/config/folders", &[], DEFAULT_TIMEOUT)
+    }
+
+    /// Creates or replaces a folder by ID.
+    pub fn put_folder(&self, folder: &Folder) -> Result<()> {
+        self.send_json(
+            "PUT",
+            &format!("/rest/config/folders/{}", folder.id),
+            folder,
+        )
+    }
+
+    /// PATCH global options, e.g. `{"relaysEnabled": false}`.
+    pub fn patch_options(&self, patch: &Value) -> Result<()> {
+        self.send_json("PATCH", "/rest/config/options", patch)
+    }
+
+    // ----- cluster -----
+
+    /// Devices that tried to connect but aren't configured yet.
+    pub fn pending_devices(&self) -> Result<Vec<PendingDevice>> {
+        #[derive(Deserialize)]
+        struct P {
+            #[serde(default)]
+            name: String,
+            #[serde(default)]
+            address: String,
+            #[serde(default)]
+            time: String,
+        }
+        let map: BTreeMap<String, P> =
+            self.get_json("/rest/cluster/pending/devices", &[], DEFAULT_TIMEOUT)?;
+        Ok(map
+            .into_iter()
+            .map(|(device_id, p)| PendingDevice {
+                device_id,
+                name: p.name,
+                address: p.address,
+                time: p.time,
+            })
+            .collect())
+    }
+
+    /// Folders offered by connected peers that we haven't added yet.
+    pub fn pending_folders(&self) -> Result<Vec<PendingFolder>> {
+        #[derive(Deserialize)]
+        struct Offer {
+            #[serde(default)]
+            label: String,
+            #[serde(default)]
+            time: String,
+        }
+        #[derive(Deserialize)]
+        struct F {
+            #[serde(rename = "offeredBy", default)]
+            offered_by: BTreeMap<String, Offer>,
+        }
+        let map: BTreeMap<String, F> =
+            self.get_json("/rest/cluster/pending/folders", &[], DEFAULT_TIMEOUT)?;
+        let mut out = Vec::new();
+        for (folder_id, f) in map {
+            for (offered_by, o) in f.offered_by {
+                out.push(PendingFolder {
+                    folder_id: folder_id.clone(),
+                    offered_by,
+                    label: o.label,
+                    time: o.time,
+                });
+            }
+        }
+        Ok(out)
+    }
+
+    // ----- db -----
+
+    /// Sync completion of `folder` for a remote `device` (or the local
+    /// device when `None`).
+    pub fn completion(&self, folder: &str, device: Option<&str>) -> Result<Completion> {
+        let mut q = vec![("folder", folder)];
+        if let Some(d) = device {
+            q.push(("device", d));
+        }
+        self.get_json("/rest/db/completion", &q, DEFAULT_TIMEOUT)
+    }
+
+    pub fn folder_status(&self, folder: &str) -> Result<FolderStatus> {
+        self.get_json("/rest/db/status", &[("folder", folder)], DEFAULT_TIMEOUT)
+    }
+
+    /// Request an immediate rescan of a folder.
+    pub fn scan(&self, folder: &str) -> Result<()> {
+        self.post_empty("/rest/db/scan", &[("folder", folder)])
+    }
+
+    // ----- events -----
+
+    /// Long-poll for events with id > `since`. Returns an empty list when
+    /// `timeout_s` elapses with no events. `types` filters by event type.
+    pub fn events(&self, since: u64, timeout_s: u64, types: &[&str]) -> Result<Vec<Event>> {
+        let since_s = since.to_string();
+        let timeout_str = timeout_s.to_string();
+        let joined = types.join(",");
+        let mut q = vec![
+            ("since", since_s.as_str()),
+            ("timeout", timeout_str.as_str()),
+        ];
+        if !types.is_empty() {
+            q.push(("events", joined.as_str()));
+        }
+        self.get_json(
+            "/rest/events",
+            &q,
+            Duration::from_secs(timeout_s) + LONG_POLL_SLACK,
+        )
+    }
+}
