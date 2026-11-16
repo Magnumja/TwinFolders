@@ -1,3 +1,4 @@
+"use client";
 import { useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { open } from "@tauri-apps/plugin-dialog";
@@ -5,12 +6,16 @@ import type { DeviceView, PreflightReport } from "../types";
 import { warningsFor } from "../lib/preflight";
 import { shortId } from "../lib/format";
 import { Modal } from "./Modal";
+import { AnimatePresence, motion } from "motion/react";
+import { motionTokens, springs } from "../lib/motion-tokens";
+import { staggerContainer, useSafeMotion } from "../hooks/useSafeMotion";
 
 function baseName(p: string): string {
   return p.split(/[\\/]/).filter(Boolean).pop() ?? p;
 }
 
-export function AddFolder({ devices, onClose, onDone }: { devices: DeviceView[]; onClose: () => void; onDone: () => void }) {
+export function AddFolder({ devices, onClose, onDone }: { devices: DeviceView[]; onClose: () => void; onDone: (label: string) => void }) {
+  const m = useSafeMotion(motionTokens.distance.sm);
   const [path, setPath] = useState<string | null>(null);
   const [report, setReport] = useState<PreflightReport | null>(null);
   const [label, setLabel] = useState("");
@@ -52,7 +57,7 @@ export function AddFolder({ devices, onClose, onDone }: { devices: DeviceView[];
         peerId,
         extraIgnores: extras.split("\n").map((l) => l.trim()).filter(Boolean),
       });
-      onDone();
+      onDone(label.trim());
     } catch (e) {
       setError(String(e));
       setBusy(null);
@@ -73,20 +78,36 @@ export function AddFolder({ devices, onClose, onDone }: { devices: DeviceView[];
             </div>
           </div>
 
-          {busy && <p className="muted">{busy}</p>}
+          <AnimatePresence mode="wait" initial={false}>
+            {busy && (
+              <motion.p key="busy" className="muted busy-line" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} transition={m.fade}>
+                <span className="spinner" aria-hidden="true" /> {busy}
+              </motion.p>
+            )}
+          </AnimatePresence>
 
           {report && warnings.length === 0 && (
-            <p className="ok-text">✓ Nenhum problema encontrado ({report.entriesScanned.toLocaleString("pt-BR")} itens verificados).</p>
+            <motion.p className="ok-text" initial={m.initial} animate={m.animate} transition={springs.snappy}>
+              ✓ Nenhum problema encontrado ({report.entriesScanned.toLocaleString("pt-BR")} itens verificados).
+            </motion.p>
           )}
-          {warnings.map((w) => (
-            <div key={w.title} className={`notice ${w.blocking ? "notice-error" : "notice-wait"}`}>
-              <strong>{w.title}</strong>
-              <p>{w.text}</p>
-              {w.items.length > 0 && (
-                <ul>{w.items.slice(0, 8).map((i) => <li key={i} className="mono small">{i}</li>)}</ul>
-              )}
-            </div>
-          ))}
+          {warnings.length > 0 && (
+            <motion.div className="form" variants={staggerContainer} initial="hidden" animate="visible" key={path ?? ""}>
+              {warnings.map((w) => (
+                <motion.div
+                  key={w.title}
+                  className={`notice ${w.blocking ? "notice-error" : "notice-wait"}`}
+                  variants={{ hidden: m.initial, visible: { ...m.animate, transition: m.reduce ? m.fade : springs.snappy } }}
+                >
+                  <strong>{w.title}</strong>
+                  <p>{w.text}</p>
+                  {w.items.length > 0 && (
+                    <ul>{w.items.slice(0, 8).map((i) => <li key={i} className="mono small">{i}</li>)}</ul>
+                  )}
+                </motion.div>
+              ))}
+            </motion.div>
+          )}
           {blocking && (
             <label className="toggle">
               <input type="checkbox" checked={ack} onChange={(e) => setAck(e.target.checked)} />
@@ -116,10 +137,18 @@ export function AddFolder({ devices, onClose, onDone }: { devices: DeviceView[];
             </>
           )}
 
-          {error && <p className="error">{error}</p>}
+          <AnimatePresence initial={false}>
+            {error && (
+              <motion.p key="err" className="error" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} transition={m.fade}>
+                {error}
+              </motion.p>
+            )}
+          </AnimatePresence>
           <div className="actions">
             <button className="btn" onClick={onClose}>Cancelar</button>
-            <button className="btn btn-primary" onClick={share} disabled={!canShare}>Compartilhar</button>
+            <motion.button className="btn btn-primary" onClick={share} disabled={!canShare} whileTap={canShare ? m.press : undefined} transition={springs.snappy}>
+              Compartilhar
+            </motion.button>
           </div>
         </div>
       )}

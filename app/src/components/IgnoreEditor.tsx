@@ -1,7 +1,11 @@
+"use client";
 import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import type { FolderView, Ignores } from "../types";
 import { Modal } from "./Modal";
+import { AnimatePresence, motion } from "motion/react";
+import { useSafeMotion } from "../hooks/useSafeMotion";
+import { useToast } from "./Toasts";
 
 /** Edits a folder's .stignore through Syncthing, which validates it. */
 export function IgnoreEditor({ folder, onClose }: { folder: FolderView; onClose: () => void }) {
@@ -9,6 +13,8 @@ export function IgnoreEditor({ folder, onClose }: { folder: FolderView; onClose:
   const [error, setError] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
   const [busy, setBusy] = useState(false);
+  const toast = useToast();
+  const m = useSafeMotion();
 
   useEffect(() => {
     invoke<Ignores>("get_ignores", { folderId: folder.id })
@@ -23,6 +29,7 @@ export function IgnoreEditor({ folder, onClose }: { folder: FolderView; onClose:
       const r = await invoke<Ignores>("set_ignores", { folderId: folder.id, text: text ?? "" });
       setError(r.error);
       setSaved(!r.error);
+      if (!r.error) toast("ok", `Exclusões de "${folder.label}" salvas e aplicadas.`);
     } catch (e) {
       setError(String(e));
     } finally {
@@ -42,8 +49,18 @@ export function IgnoreEditor({ folder, onClose }: { folder: FolderView; onClose:
         ) : (
           <textarea className="mono editor" rows={14} value={text ?? ""} onChange={(e) => { setText(e.target.value); setSaved(false); }} spellCheck={false} aria-label="Regras de exclusão" />
         )}
-        {error && <p className="error">Syncthing recusou as regras: {error}</p>}
-        {saved && <p className="ok-text">✓ Salvo e aplicado.</p>}
+        <AnimatePresence mode="wait" initial={false}>
+          {error && (
+            <motion.p key="e" className="error" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} transition={m.fade}>
+              Syncthing recusou as regras: {error}
+            </motion.p>
+          )}
+          {saved && (
+            <motion.p key="s" className="ok-text" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} transition={m.fade}>
+              ✓ Salvo e aplicado.
+            </motion.p>
+          )}
+        </AnimatePresence>
         <div className="actions">
           <button className="btn" onClick={onClose}>Fechar</button>
           <button className="btn btn-primary" onClick={save} disabled={busy || text === null}>Salvar</button>

@@ -83,10 +83,16 @@ main { flex: 1; padding: 4px 24px 24px; max-width: 1000px; width: 100%; margin: 
 .tag-error { color: var(--error); background: color-mix(in srgb, var(--error) 12%, transparent); }
 .tag-muted { color: var(--muted); background: color-mix(in srgb, var(--mutedtone) 16%, transparent); }
 
-.folder-icon { font-size: 20px; }
+.folder-icon { display: grid; place-items: center; width: 36px; height: 36px; border-radius: 10px; flex: none; }
+.folder-icon.tone-ok { color: var(--ok); background: color-mix(in srgb, var(--ok) 12%, transparent); }
+.folder-icon.tone-busy { color: var(--busy); background: color-mix(in srgb, var(--busy) 12%, transparent); }
+.folder-icon.tone-wait { color: var(--wait); background: color-mix(in srgb, var(--wait) 14%, transparent); }
+.folder-icon.tone-error { color: var(--error); background: color-mix(in srgb, var(--error) 12%, transparent); }
+.folder-icon.tone-muted { color: var(--muted); background: color-mix(in srgb, var(--mutedtone) 16%, transparent); }
 .path { margin: 2px 0 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .bar { height: 6px; border-radius: 999px; background: var(--border); overflow: hidden; margin: 12px 0 10px; }
-.bar span { display: block; height: 100%; border-radius: inherit; transition: width 0.4s ease; }
+/* filled via scaleX (transform-only animation) */
+.bar span { display: block; width: 100%; height: 100%; border-radius: inherit; transform-origin: left center; transform: scaleX(0); will-change: transform; }
 .bar-ok span { background: var(--ok); }
 .bar-busy span { background: var(--busy); }
 .bar-wait span { background: var(--wait); }
@@ -112,7 +118,7 @@ main { flex: 1; padding: 4px 24px 24px; max-width: 1000px; width: 100%; margin: 
 .link-btn { background: none; border: none; padding: 2px 0; font: inherit; font-size: 12px; color: var(--busy); cursor: pointer; }
 .link-btn.danger { color: var(--error); }
 .icon-btn { background: none; border: none; color: var(--muted); font-size: 16px; cursor: pointer; padding: 4px 8px; border-radius: 6px; }
-.folder-actions { display: flex; gap: 16px; margin-top: 6px; padding-left: 30px; }
+
 .pending { align-items: flex-start; border-color: color-mix(in srgb, var(--wait) 45%, var(--border)); }
 .pending p { margin: 4px 0 0; }
 
@@ -134,3 +140,44 @@ textarea.editor { font-size: 12.5px; line-height: 1.5; resize: vertical; }
 .notice-wait { border-color: color-mix(in srgb, var(--wait) 40%, transparent); background: color-mix(in srgb, var(--wait) 7%, transparent); }
 .ok-text { color: var(--ok); margin: 0; }
 .actions { display: flex; justify-content: flex-end; gap: 10px; margin-top: 4px; }
+
+/* ---- fluidity pass (motion/react drives enter/exit; CSS only for hover/idle) ---- */
+.card { transition: border-color 0.18s ease, box-shadow 0.18s ease; }
+.card.folder:hover, .card.device:hover { border-color: color-mix(in srgb, var(--busy) 35%, var(--border)); box-shadow: 0 4px 18px rgb(0 0 0 / 0.08); }
+.ellipsis { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.spacer { flex: 1; }
+.meta .link-btn { opacity: 0.85; }
+.card.folder:hover .link-btn, .link-btn:focus-visible { opacity: 1; }
+.count { display: inline-grid; place-items: center; min-width: 18px; height: 18px; padding: 0 5px; margin-left: 6px; border-radius: 999px; font-size: 11px; background: var(--border); color: var(--text); letter-spacing: 0; }
+.count-wait { background: color-mix(in srgb, var(--wait) 22%, transparent); color: var(--wait); }
+.pill { min-width: 0; }
+.copy.copied { color: var(--ok); }
+.device-id { overflow: hidden; }
+
+.empty { display: flex; flex-direction: column; align-items: center; gap: 6px; text-align: center; padding: 28px 16px; border: 1px dashed var(--border); border-radius: var(--radius); }
+.empty p { margin: 0 0 6px; max-width: 360px; }
+.empty-icon { font-size: 28px; display: inline-block; }
+
+.toasts { position: fixed; right: 16px; bottom: 64px; display: flex; flex-direction: column; gap: 8px; z-index: 20; width: min(380px, calc(100vw - 32px)); pointer-events: none; }
+.toast { pointer-events: auto; display: flex; align-items: center; gap: 10px; padding: 10px 10px 10px 12px; border-radius: 12px; background: var(--surface); border: 1px solid var(--border); box-shadow: 0 10px 30px rgb(0 0 0 / 0.18); font-size: 13px; }
+.toast-icon { display: grid; place-items: center; width: 20px; height: 20px; border-radius: 50%; font-size: 12px; font-weight: 700; color: #fff; flex: none; }
+.toast-ok .toast-icon { background: var(--ok); }
+.toast-error .toast-icon { background: var(--error); }
+.toast-info .toast-icon { background: var(--busy); }
+
+.busy-line { display: flex; align-items: center; gap: 8px; margin: 0; }
+.spinner { width: 14px; height: 14px; border-radius: 50%; border: 2px solid var(--border); border-top-color: var(--busy); animation: spin 0.8s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
+
+.sk { border-radius: 8px; background: linear-gradient(90deg, var(--border) 0%, color-mix(in srgb, var(--border) 45%, var(--surface)) 50%, var(--border) 100%); background-size: 200% 100%; animation: shimmer 1.3s ease-in-out infinite; }
+.sk-title { width: 120px; height: 12px; margin: 24px 0 12px; }
+.sk-card { display: flex; flex-direction: column; gap: 10px; margin-bottom: 10px; }
+.sk-line { height: 12px; width: 70%; }
+.sk-line.short { width: 40%; }
+.sk-bar { height: 6px; width: 100%; }
+@keyframes shimmer { from { background-position: 200% 0; } to { background-position: -200% 0; } }
+
+@media (prefers-reduced-motion: reduce) {
+  .sk, .spinner { animation: none; }
+  .card { transition: none; }
+}
