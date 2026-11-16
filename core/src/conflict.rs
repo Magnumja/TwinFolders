@@ -45,20 +45,30 @@ fn days_in_month(y: u32, m: u32) -> u32 {
     }
 }
 
-/// Syncthing's own control files must never be renamed/archived by a plan.
-const CONTROL_NAMES: &[&str] = &[".stignore", ".stfolder"];
-const VERSIONS_DIR: &str = ".stversions";
+/// Syncthing's own control files/dirs must never be renamed/archived by a
+/// plan. Compared case-insensitively: macOS and Windows file systems are
+/// case-insensitive by default.
+const CONTROL_NAMES: &[&str] = &[".stignore", ".stfolder", ".stversions"];
+
+fn is_control_component(c: &str) -> bool {
+    CONTROL_NAMES.iter().any(|n| n.eq_ignore_ascii_case(c))
+}
 
 /// Peer-controlled names reach the conflict planner, so only plain relative
 /// `/`-separated paths are accepted: no absolute paths, empty/`.`/`..`
 /// components, backslashes or colons (traversal/drive letters on Windows),
-/// NUL, or anything under `.stversions`.
+/// NUL, components ending in `.` or space (Windows silently strips them, so
+/// `.stversions.` == `.stversions`), or anything under a control dir.
 fn is_safe_relative(path: &str) -> bool {
     !path.starts_with('/')
         && !path.contains(['\\', ':', '\0'])
-        && path
-            .split('/')
-            .all(|c| !c.is_empty() && c != "." && c != ".." && c != VERSIONS_DIR)
+        && path.split('/').all(|c| {
+            !c.is_empty()
+                && c != "."
+                && c != ".."
+                && !c.ends_with(['.', ' '])
+                && !is_control_component(c)
+        })
 }
 
 /// Parses a path as a Syncthing conflict copy; `None` for anything else,
@@ -112,7 +122,7 @@ pub fn parse(path: &str) -> Option<ConflictFile> {
         return None;
     }
     let original_name = format!("{stem}{ext}");
-    if CONTROL_NAMES.contains(&original_name.as_str()) {
+    if is_control_component(&original_name) || original_name.ends_with(['.', ' ']) {
         return None;
     }
     Some(ConflictFile {
@@ -491,5 +501,21 @@ mod tests {
         assert_eq!(parse(&format!("sub/.stfolder{tail}")), None);
         assert_eq!(parse(&format!(".stversions/a{tail}.txt")), None);
         assert!(parse(&format!("docs/a{tail}.txt")).is_some());
+    }
+
+    #[test]
+    fn control_names_are_matched_case_and_trailing_dot_insensitively() {
+        let tail = ".sync-conflict-20261116-143005-ABCDEF2";
+        for p in [
+            format!(".STIGNORE{tail}"),
+            format!(".StFolder{tail}"),
+            format!(".stversions{tail}"),
+            format!(".STVersions/a{tail}.txt"),
+            format!(".stversions. /a{tail}.txt"),
+            format!("dir./a{tail}.txt"),
+            format!("dir /a{tail}.txt"),
+        ] {
+            assert_eq!(parse(&p), None, "{p:?}");
+        }
     }
 }
