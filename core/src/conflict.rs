@@ -54,10 +54,21 @@ const CONTROL_NAMES: &[&str] = &[".stignore", ".stfolder", ".stversions"];
 /// (slice 5). Unicode uppercase catches NTFS-equivalent spellings such as
 /// `.ſtignore` (U+017F uppercases to `S`), and `.ST…~N` catches 8.3 short
 /// names like `.STIGN~1`.
+/// Zero-width / bidi / soft-hyphen code points that some file systems or
+/// tools ignore, letting a name look different from what is stored.
+fn is_invisible(ch: char) -> bool {
+    matches!(
+        ch,
+        '\u{00AD}' | '\u{200B}'..='\u{200F}' | '\u{202A}'..='\u{202E}' | '\u{2060}'..='\u{2064}' | '\u{FEFF}'
+    )
+}
+
 fn is_control_component(c: &str) -> bool {
     let up = c.to_uppercase();
+    // NTFS 8.3 names drop the leading dot: `.stignore` -> `STIGNO~1`.
+    let bare = up.trim_start_matches('.');
     CONTROL_NAMES.iter().any(|n| n.to_uppercase() == up)
-        || (up.starts_with(".ST") && up.contains('~'))
+        || (bare.starts_with("ST") && bare.contains('~'))
 }
 
 /// Peer-controlled names reach the conflict planner, so only plain relative
@@ -73,6 +84,7 @@ fn is_safe_relative(path: &str) -> bool {
                 && c != "."
                 && c != ".."
                 && !c.ends_with(['.', ' '])
+                && !c.chars().any(is_invisible)
                 && !is_control_component(c)
         })
 }
@@ -539,5 +551,18 @@ mod tests {
             parse(&format!("~backup{tail}.txt")).is_some(),
             "ordinary ~ names still fine"
         );
+    }
+
+    #[test]
+    fn short_names_without_dot_and_invisible_chars_are_rejected() {
+        let tail = ".sync-conflict-20261116-143005-ABCDEF2";
+        for p in [
+            format!("STIGNO~1{tail}"),
+            format!("STVERS~1/a{tail}.txt"),
+            format!(".st\u{200B}ignore{tail}"),
+            format!("do\u{202E}cs/a{tail}.txt"),
+        ] {
+            assert_eq!(parse(&p), None, "{p:?}");
+        }
     }
 }
