@@ -32,6 +32,8 @@ pub enum Error {
     NotLoopback(String),
     /// Folder ID unsafe to place in a URL (`[A-Za-z0-9._-]{1,64}`, not `.`/`..`).
     InvalidFolderId(String),
+    /// TLS setup problem (bad pinned certificate, non-https URL).
+    Tls(String),
 }
 
 impl fmt::Display for Error {
@@ -43,6 +45,7 @@ impl fmt::Display for Error {
             Error::Decode(e) => write!(f, "unexpected Syncthing response: {e}"),
             Error::NotLoopback(u) => write!(f, "refusing non-loopback Syncthing address: {u}"),
             Error::InvalidFolderId(id) => write!(f, "invalid folder ID: {id:?}"),
+            Error::Tls(e) => write!(f, "TLS: {e}"),
         }
     }
 }
@@ -331,18 +334,44 @@ impl SyncthingClient {
     /// accepted, and redirects are never followed: ureq keeps custom headers
     /// such as `X-API-Key` across redirects, which would leak the key.
     pub fn new(base_url: &str, api_key: &str) -> Result<Self> {
+        Self::build(base_url, api_key, None)
+    }
+
+    /// HTTPS client that trusts **only** the given CA (PEM), so the API key
+    /// is sent only to a server holding a certificate signed by it (see
+    /// [`crate::guitls`]). Requires an `https://` loopback URL.
+    pub fn with_pinned_ca(base_url: &str, api_key: &str, ca_pem: &[u8]) -> Result<Self> {
+        if !base_url.starts_with("https://") {
+            return Err(Error::Tls("pinned client requires an https:// URL".into()));
+        }
+        let ca = ureq::tls::Certificate::from_pem(ca_pem).map_err(|e| Error::Tls(e.to_string()))?;
+        Self::build(base_url, api_key, Some(ca))
+    }
+
+    fn build(
+        base_url: &str,
+        api_key: &str,
+        pinned: Option<ureq::tls::Certificate<'static>>,
+    ) -> Result<Self> {
         if !is_loopback_url(base_url) {
             return Err(Error::NotLoopback(base_url.to_string()));
         }
-        let config = ureq::Agent::config_builder()
+        let mut builder = ureq::Agent::config_builder()
             .http_status_as_error(false)
             .max_redirects(0)
-            .timeout_connect(Some(Duration::from_secs(3)))
-            .build();
+            .timeout_connect(Some(Duration::from_secs(3)));
+        if let Some(ca) = pinned {
+            let tls = ureq::tls::TlsConfig::builder()
+                .root_certs(ureq::tls::RootCerts::Specific(std::sync::Arc::new(vec![
+                    ca,
+                ])))
+                .build();
+            builder = builder.tls_config(tls);
+        }
         Ok(Self {
             base: base_url.trim_end_matches('/').to_string(),
             api_key: api_key.to_string(),
-            agent: ureq::Agent::new_with_config(config),
+            agent: ureq::Agent::new_with_config(builder.build()),
         })
     }
 
@@ -450,6 +479,17 @@ impl SyncthingClient {
         Ok(self
             .get_json::<C>("/rest/system/connections", &[], DEFAULT_TIMEOUT)?
             .connections)
+    }
+
+    /// GET any `/rest/...` endpoint as raw JSON (for fields not typed here).
+    pub fn get_value(&self, path: &str) -> Result<Value> {
+        if !path.starts_with("/rest/") {
+            return Err(Error::Http {
+                status: 0,
+                body: format!("refusing non-REST path {path}"),
+            });
+        }
+        self.get_json(path, &[], DEFAULT_TIMEOUT)
     }
 
     /// Asks Syncthing to exit cleanly (exit code 0).

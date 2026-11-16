@@ -8,7 +8,7 @@ use std::process::{Command, Stdio};
 use std::time::Duration;
 
 use common::{require_syncthing, temp_root, wait_until};
-use twinfolders_core::client::SyncthingClient;
+use twinfolders_core::client::{Error, SyncthingClient};
 use twinfolders_core::service::{self, Os, ServiceConfig};
 use twinfolders_core::stconfig;
 
@@ -18,17 +18,6 @@ fn free_port() -> u16 {
         .local_addr()
         .unwrap()
         .port()
-}
-
-/// GET a REST path; key goes in a header, never on a command line.
-fn get_json(base: &str, key: &str, path: &str) -> serde_json::Value {
-    ureq::get(format!("{base}{path}"))
-        .header("X-API-Key", key)
-        .call()
-        .unwrap()
-        .body_mut()
-        .read_json()
-        .unwrap()
 }
 
 #[test]
@@ -79,8 +68,26 @@ fn provisioned_home_is_hardened_and_daemon_applies_it() {
         .spawn()
         .unwrap();
 
-    let c = SyncthingClient::new(&cfg.gui_url(), &gui.api_key).unwrap();
+    assert!(gui.tls, "GUI served over TLS");
+    let c = service::client_for(&cfg, &gui.api_key).unwrap();
     wait_until(Duration::from_secs(30), "daemon up", || c.ping().is_ok());
+
+    // Pinning: an ordinary HTTPS client (system/webpki roots) is rejected,
+    // and so is one pinned to a different CA.
+    let unpinned = SyncthingClient::new(&cfg.gui_url(), &gui.api_key).unwrap();
+    assert!(
+        matches!(unpinned.ping(), Err(Error::Transport(_))),
+        "unpinned TLS must fail"
+    );
+    let other = root.join("other");
+    twinfolders_core::guitls::ensure(&other).unwrap();
+    let other_ca = twinfolders_core::guitls::load_ca_pem(&other).unwrap();
+    let wrong = SyncthingClient::with_pinned_ca(&cfg.gui_url(), &gui.api_key, &other_ca).unwrap();
+    assert!(
+        matches!(wrong.ping(), Err(Error::Transport(_))),
+        "wrong CA must fail"
+    );
+    eprintln!("EVIDENCE: pinned TLS ok; unpinned and wrong-CA clients rejected");
     // The listener-ownership check exists only on the supported desktop OSes.
     if Os::current().is_some() {
         assert!(
@@ -100,7 +107,7 @@ fn provisioned_home_is_hardened_and_daemon_applies_it() {
     }
 
     // Check the live options through REST, not just the file.
-    let opts = get_json(&cfg.gui_url(), &gui.api_key, "/rest/config/options");
+    let opts = c.get_value("/rest/config/options").unwrap();
     assert_eq!(opts["natEnabled"], false, "no UPnP/NAT-PMP router mapping");
     assert_eq!(opts["relaysEnabled"], false);
     assert_eq!(opts["globalAnnounceEnabled"], false);
@@ -110,7 +117,7 @@ fn provisioned_home_is_hardened_and_daemon_applies_it() {
         opts["listenAddresses"],
         serde_json::json!([format!("tcp://0.0.0.0:{}", cfg.listen_port)])
     );
-    let gui_live = get_json(&cfg.gui_url(), &gui.api_key, "/rest/config/gui");
+    let gui_live = c.get_value("/rest/config/gui").unwrap();
     assert_eq!(gui_live["user"], "twinfolders");
     assert!(
         gui_live["password"].as_str().unwrap().starts_with("$2"),

@@ -2,6 +2,7 @@
 
 pub mod client;
 pub mod conflict;
+pub mod guitls;
 pub mod names;
 pub mod pairing;
 pub mod secrets;

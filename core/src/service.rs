@@ -16,7 +16,7 @@ use std::process::Command;
 use std::time::{Duration, Instant};
 
 use crate::client::{self, SyncthingClient};
-use crate::{secrets, stconfig};
+use crate::{guitls, secrets, stconfig};
 
 pub const LAUNCHD_LABEL: &str = "dev.twinfolders.syncthing";
 pub const WINDOWS_TASK_PATH: &str = "\\TwinFolders\\";
@@ -83,8 +83,9 @@ impl ServiceConfig {
         })
     }
 
+    /// HTTPS with the pinned certificate from [`crate::guitls`].
     pub fn gui_url(&self) -> String {
-        format!("http://127.0.0.1:{}", self.gui_port)
+        format!("https://127.0.0.1:{}", self.gui_port)
     }
 
     /// Arguments for `syncthing` (after the binary). No secrets.
@@ -395,6 +396,7 @@ pub fn provision_home(cfg: &ServiceConfig) -> Result<Provisioned> {
         Err(e) if e.kind() == io::ErrorKind::NotFound => true,
         Err(e) => return Err(e.into()),
     };
+    guitls::ensure(&cfg.home)?;
     let new_gui_password = if needs_auth {
         let pw = secrets::random_password();
         generate_with_gui_auth(cfg, &pw)?;
@@ -501,8 +503,10 @@ fn same_bin(a: &Path, b: &Path) -> bool {
     }
 }
 
-fn client_for(cfg: &ServiceConfig, key: &str) -> Result<SyncthingClient> {
-    Ok(SyncthingClient::new(&cfg.gui_url(), key)?)
+/// Client that trusts only the pinned GUI CA in the Syncthing home.
+pub fn client_for(cfg: &ServiceConfig, key: &str) -> Result<SyncthingClient> {
+    let ca = guitls::load_ca_pem(&cfg.home)?;
+    Ok(SyncthingClient::with_pinned_ca(&cfg.gui_url(), key, &ca)?)
 }
 
 /// Waits until the REST API answers with the right key.
@@ -769,7 +773,7 @@ mod tests {
     fn serve_args_are_loopback_and_secret_free() {
         let a = cfg_mac().serve_args(Os::MacOs);
         assert_eq!(a[0], "serve");
-        assert!(a.contains(&"--gui-address=http://127.0.0.1:8385".to_string()));
+        assert!(a.contains(&"--gui-address=https://127.0.0.1:8385".to_string()));
         for flag in [
             "--no-browser",
             "--no-restart",

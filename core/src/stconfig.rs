@@ -136,6 +136,22 @@ pub fn harden(xml: &str, gui_port: u16, listen_port: u16) -> Result<String, Conf
     roxmltree::Document::parse(xml).map_err(|e| ConfigError::Xml(e.to_string()))?;
     let mut out = xml.to_string();
 
+    // GUI over TLS with the pinned certificate (see `guitls`).
+    let gui_open = out.find("<gui").ok_or(ConfigError::MissingElement("gui"))?;
+    let gui_open_end = out[gui_open..]
+        .find('>')
+        .ok_or(ConfigError::MissingElement("gui"))?
+        + gui_open;
+    let tag = out[gui_open..gui_open_end].to_string();
+    let new_tag = if tag.contains("tls=\"true\"") {
+        tag.clone()
+    } else if tag.contains("tls=\"false\"") {
+        tag.replace("tls=\"false\"", "tls=\"true\"")
+    } else {
+        format!("{tag} tls=\"true\"")
+    };
+    out.replace_range(gui_open..gui_open_end, &new_tag);
+
     let gui = block(&out, "gui", 0).ok_or(ConfigError::MissingElement("gui"))?;
     set_in(&mut out, gui, "address", &format!("127.0.0.1:{gui_port}"))?;
 
@@ -243,6 +259,7 @@ mod tests {
     fn harden_sets_all_options_and_ports() {
         let h = harden(SAMPLE, 8385, 22001).unwrap();
         assert_eq!(read_gui(&h).unwrap().address, "127.0.0.1:8385");
+        assert!(read_gui(&h).unwrap().tls, "GUI served over TLS");
         assert_eq!(
             read_gui(&h).unwrap().api_key,
             "SECRETKEY123",
