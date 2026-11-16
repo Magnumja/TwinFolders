@@ -12,6 +12,8 @@ use crate::stconfig;
 
 pub const SERVICE: &str = "twinfolders";
 pub const API_KEY_ACCOUNT: &str = "syncthing-api-key";
+/// Random password protecting the Syncthing web GUI (user `twinfolders`).
+pub const GUI_PASSWORD_ACCOUNT: &str = "syncthing-gui-password";
 
 fn entry(account: &str) -> Result<keyring::Entry, String> {
     keyring::Entry::new(SERVICE, account).map_err(|e| format!("credential store: {e}"))
@@ -27,6 +29,28 @@ pub fn load_api_key() -> Result<Option<String>, String> {
 
 pub fn delete_api_key() -> Result<(), String> {
     delete(API_KEY_ACCOUNT)
+}
+
+pub fn store_gui_password(pw: &str) -> Result<(), String> {
+    store(GUI_PASSWORD_ACCOUNT, pw)
+}
+
+pub fn delete_gui_password() -> Result<(), String> {
+    delete(GUI_PASSWORD_ACCOUNT)
+}
+
+/// 32 random characters from the OS CSPRNG (alphabet without look-alikes).
+pub fn random_password() -> String {
+    const ALPHABET: &[u8] = b"ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnpqrstuvwxyz23456789";
+    let mut buf = [0u8; 64];
+    getrandom::fill(&mut buf).expect("OS random number generator");
+    // Rejection sampling avoids modulo bias.
+    let limit = 256 - (256 % ALPHABET.len());
+    buf.iter()
+        .filter(|&&b| (b as usize) < limit)
+        .take(32)
+        .map(|&b| ALPHABET[b as usize % ALPHABET.len()] as char)
+        .collect()
 }
 
 fn store(account: &str, value: &str) -> Result<(), String> {
@@ -69,6 +93,15 @@ pub fn resolve_api_key(home: &Path) -> Result<String, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn random_passwords_are_long_and_distinct() {
+        let a = random_password();
+        let b = random_password();
+        assert_eq!(a.len(), 32);
+        assert_ne!(a, b);
+        assert!(a.chars().all(|c| c.is_ascii_alphanumeric()));
+    }
 
     /// Touches the real OS credential store, so it only runs when
     /// `TWINFOLDERS_KEYCHAIN_TEST=1`. Uses a throwaway account and cleans up.

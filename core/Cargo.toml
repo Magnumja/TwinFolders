@@ -6,6 +6,7 @@ license.workspace = true
 description = "Syncthing client and cross-platform utilities for TwinFolders"
 
 [dependencies]
+getrandom = "0.4.3"
 keyring = "4.2.0"
 roxmltree = "0.21.2"
 serde = { version = "1.0.229", features = ["derive"] }

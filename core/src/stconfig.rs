@@ -15,6 +15,18 @@ pub struct GuiConfig {
     pub address: String,
     pub api_key: String,
     pub tls: bool,
+    /// Web GUI user; empty means the browser GUI is open to any local user.
+    pub user: String,
+    /// True when a bcrypt password hash is set.
+    pub has_password: bool,
+}
+
+impl GuiConfig {
+    /// Browser GUI protected by user + password (the REST API always
+    /// requires the API key regardless).
+    pub fn has_gui_auth(&self) -> bool {
+        !self.user.is_empty() && self.has_password
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -48,10 +60,20 @@ pub fn read_gui(xml: &str) -> Result<GuiConfig, ConfigError> {
             .map(|n| n.text().unwrap_or("").trim().to_string())
             .ok_or(ConfigError::MissingElement(tag))
     };
+    let opt_text = |tag: &str| {
+        gui.children()
+            .find(|n| n.has_tag_name(tag))
+            .and_then(|n| n.text())
+            .unwrap_or("")
+            .trim()
+            .to_string()
+    };
     Ok(GuiConfig {
         address: text("address")?,
         api_key: text("apikey")?,
         tls: gui.attribute("tls") == Some("true"),
+        user: opt_text("user"),
+        has_password: opt_text("password").starts_with("$2"),
     })
 }
 
@@ -209,6 +231,12 @@ mod tests {
         assert_eq!(g.address, "127.0.0.1:8384");
         assert_eq!(g.api_key, "SECRETKEY123");
         assert!(!g.tls);
+        assert!(!g.has_gui_auth(), "fresh generate has no GUI user/password");
+        let with = SAMPLE.replace(
+            "<theme>default</theme>",
+            "<user>twinfolders</user><password>$2a$10$abcdefghijklmnopqrstuv</password><theme>default</theme>",
+        );
+        assert!(read_gui(&with).unwrap().has_gui_auth());
     }
 
     #[test]

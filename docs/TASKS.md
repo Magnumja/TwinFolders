@@ -82,3 +82,5 @@ Legenda: 🤖 roda em agente paralelo · 🔎 verificar docs oficiais antes · �
 | Segurança #4 | `cargo deny`/`cargo audit` no CI | 7.3 |
 | Fatia 3 (teste real) | Item do Keychain é atrelado ao binário que o criou: builds não assinados/atualizados fazem o macOS pedir permissão de novo → assinar/notarizar o app | 7.1 |
 | Fatia 3 (teste real) | Matar o monitor do Syncthing com kill -9 também encerra o worker e o launchd relança tudo (verificado); no Windows `Stop-ScheduledTask` pode deixar o worker vivo → uninstall já faz shutdown via REST antes | 🖐 Windows |
+| Segurança (Fatia 3) | Painel web sem senha → corrigido: usuário `twinfolders` + senha aleatória (bcrypt via `syncthing generate --gui-password=-`, senha no cofre do SO) | ✅ |
+| Segurança (Fatia 3) | Port squatting na 8385 → corrigido no serviço: a key só é enviada se o processo dono da porta for o nosso Syncthing (mesmo usuário, mesmo binário canônico). No app Tauri, usar HTTPS do GUI com certificado fixado (`https-cert.pem` do home) | 4.1 |

@@ -45,7 +45,11 @@ fn provisioned_home_is_hardened_and_daemon_applies_it() {
         listen_port: free_port(),
     };
 
-    let gui = service::provision_home(&cfg).unwrap();
+    let prov = service::provision_home(&cfg).unwrap();
+    let gui = prov.gui.clone();
+    assert!(gui.has_gui_auth(), "web GUI protected by user/password");
+    assert_eq!(gui.user, "twinfolders");
+    assert_eq!(prov.new_gui_password.as_ref().map(|p| p.len()), Some(32));
     assert_eq!(gui.address, format!("127.0.0.1:{}", cfg.gui_port));
     assert!(gui.api_key.len() >= 20, "generated key");
 
@@ -62,7 +66,8 @@ fn provisioned_home_is_hardened_and_daemon_applies_it() {
 
     // Idempotent: second provisioning keeps the same identity and key.
     let again = service::provision_home(&cfg).unwrap();
-    assert_eq!(again.api_key, gui.api_key);
+    assert_eq!(again.gui.api_key, gui.api_key);
+    assert_eq!(again.new_gui_password, None, "existing password kept");
 
     // Start exactly like the service would (same args, no key on argv).
     let args = cfg.serve_args(Os::current().unwrap_or(Os::MacOs));
@@ -76,6 +81,20 @@ fn provisioned_home_is_hardened_and_daemon_applies_it() {
 
     let c = SyncthingClient::new(&cfg.gui_url(), &gui.api_key).unwrap();
     wait_until(Duration::from_secs(30), "daemon up", || c.ping().is_ok());
+    assert!(
+        service::listener_is_ours(&cfg),
+        "our syncthing owns the GUI port"
+    );
+
+    // A squatter on another port is not "ours": the key must not be sent.
+    let squatter = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let mut fake = cfg.clone();
+    fake.gui_port = squatter.local_addr().unwrap().port();
+    assert!(
+        !service::listener_is_ours(&fake),
+        "foreign listener rejected"
+    );
+    eprintln!("EVIDENCE: listener check ours=true squatter=false");
 
     // Check the live options through REST, not just the file.
     let opts = get_json(&cfg.gui_url(), &gui.api_key, "/rest/config/options");
@@ -89,6 +108,11 @@ fn provisioned_home_is_hardened_and_daemon_applies_it() {
         serde_json::json!([format!("tcp://0.0.0.0:{}", cfg.listen_port)])
     );
     let gui_live = get_json(&cfg.gui_url(), &gui.api_key, "/rest/config/gui");
+    assert_eq!(gui_live["user"], "twinfolders");
+    assert!(
+        gui_live["password"].as_str().unwrap().starts_with("$2"),
+        "bcrypt hash"
+    );
     assert!(stconfig::is_loopback_address(
         gui_live["address"].as_str().unwrap()
     ));

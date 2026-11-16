@@ -337,26 +337,159 @@ fn run(cmd: &str, args: &[&str]) -> Result<String> {
 
 // ---------- provisioning (shared) ----------
 
-/// Creates the Syncthing home on first run (`syncthing generate`) and applies
-/// [`stconfig::harden`]. Must run while Syncthing is NOT running.
-pub fn provision_home(cfg: &ServiceConfig) -> Result<stconfig::GuiConfig> {
-    std::fs::create_dir_all(&cfg.log_dir)?;
-    let config = cfg.home.join("config.xml");
-    if !config.exists() {
-        std::fs::create_dir_all(&cfg.home)?;
-        let home_arg = format!("--home={}", cfg.home.display());
-        run(
-            &cfg.syncthing_bin.to_string_lossy(),
-            &["generate", &home_arg, "--no-port-probing"],
-        )?;
+/// Web GUI user created by TwinFolders.
+pub const GUI_USER: &str = "twinfolders";
+
+/// Result of [`provision_home`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Provisioned {
+    pub gui: stconfig::GuiConfig,
+    /// Set when a new random GUI password was created (caller stores it in
+    /// the OS credential store). Never logged.
+    pub new_gui_password: Option<String>,
+}
+
+/// Runs `syncthing generate` for `cfg.home`, setting GUI user/password.
+/// The password goes through stdin (`--gui-password=-`), never argv. On an
+/// existing home Syncthing keeps the device keys and only updates the GUI
+/// credentials (verified with v2.1.7).
+fn generate_with_gui_auth(cfg: &ServiceConfig, password: &str) -> Result<()> {
+    use std::io::Write;
+    use std::process::Stdio;
+    let mut child = Command::new(&cfg.syncthing_bin)
+        .arg("generate")
+        .arg(format!("--home={}", cfg.home.display()))
+        .arg("--no-port-probing")
+        .arg(format!("--gui-user={GUI_USER}"))
+        .arg("--gui-password=-")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::null())
+        .stderr(Stdio::piped())
+        .spawn()?;
+    child
+        .stdin
+        .take()
+        .expect("piped stdin")
+        .write_all(password.as_bytes())?;
+    let out = child.wait_with_output()?;
+    if out.status.success() {
+        Ok(())
+    } else {
+        Err(ServiceError::Command {
+            cmd: "syncthing generate --gui-user=twinfolders --gui-password=-".into(),
+            code: out.status.code(),
+            stderr: String::from_utf8_lossy(&out.stderr).into_owned(),
+        })
     }
+}
+
+/// Creates the Syncthing home on first run, protects the web GUI with a
+/// random password if it has none, and applies [`stconfig::harden`].
+/// Must run while Syncthing is NOT running.
+pub fn provision_home(cfg: &ServiceConfig) -> Result<Provisioned> {
+    std::fs::create_dir_all(&cfg.log_dir)?;
+    std::fs::create_dir_all(&cfg.home)?;
+    let config = cfg.home.join("config.xml");
+    let needs_auth = match std::fs::read_to_string(&config) {
+        Ok(xml) => !stconfig::read_gui(&xml)?.has_gui_auth(),
+        Err(e) if e.kind() == io::ErrorKind::NotFound => true,
+        Err(e) => return Err(e.into()),
+    };
+    let new_gui_password = if needs_auth {
+        let pw = secrets::random_password();
+        generate_with_gui_auth(cfg, &pw)?;
+        Some(pw)
+    } else {
+        None
+    };
     let xml = std::fs::read_to_string(&config)?;
     let hardened = stconfig::harden(&xml, cfg.gui_port, cfg.listen_port)?;
     if hardened != xml {
         // fs::write on an existing file keeps its 0600 mode.
         std::fs::write(&config, &hardened)?;
     }
-    Ok(stconfig::read_gui(&hardened)?)
+    let gui = stconfig::read_gui(&hardened)?;
+    if !gui.has_gui_auth() {
+        return Err(ServiceError::NotReady(
+            "web GUI has no user/password after provisioning".into(),
+        ));
+    }
+    Ok(Provisioned {
+        gui,
+        new_gui_password,
+    })
+}
+
+/// True only if every process listening on the GUI port is our Syncthing
+/// binary run by this user. The API key is sent only after this check, so
+/// a program that grabbed the port first never receives it.
+pub fn listener_is_ours(cfg: &ServiceConfig) -> bool {
+    match Os::current() {
+        Some(Os::MacOs) => {
+            let port = format!("-iTCP:{}", cfg.gui_port);
+            let Ok(out) = run("lsof", &["-nP", &port, "-sTCP:LISTEN", "-t"]) else {
+                return false;
+            };
+            let Ok(me) = uid() else { return false };
+            let pids: Vec<&str> = out.split_whitespace().collect();
+            !pids.is_empty()
+                && pids.iter().all(|pid| {
+                    run("ps", &["-o", "uid=,comm=", "-p", pid])
+                        .map(|l| {
+                            let l = l.trim();
+                            let (u, comm) = l.split_once(char::is_whitespace).unwrap_or(("", ""));
+                            u == me && same_bin(Path::new(comm.trim()), &cfg.syncthing_bin)
+                        })
+                        .unwrap_or(false)
+                })
+        }
+        Some(Os::Windows) => {
+            let script = format!(
+                "$c = Get-NetTCPConnection -LocalPort {} -State Listen -ErrorAction SilentlyContinue; if (-not $c) {{ exit 1 }}; $c.OwningProcess | Sort-Object -Unique | ForEach-Object {{ (Get-Process -Id $_).Path }}",
+                cfg.gui_port
+            );
+            let Ok(out) = powershell(&script) else {
+                return false;
+            };
+            let paths: Vec<&str> = out
+                .lines()
+                .map(str::trim)
+                .filter(|l| !l.is_empty())
+                .collect();
+            !paths.is_empty()
+                && paths
+                    .iter()
+                    .all(|p| same_bin(Path::new(p), &cfg.syncthing_bin))
+        }
+        None => false,
+    }
+}
+
+/// Canonical path of a binary; bare names (e.g. `syncthing`) are looked up
+/// in PATH. Symlinks (Homebrew) are resolved so both sides compare equal.
+fn canonical_bin(p: &Path) -> Option<PathBuf> {
+    if p.components().count() == 1 {
+        let exe = if cfg!(windows) && p.extension().is_none() {
+            p.with_extension("exe")
+        } else {
+            p.to_path_buf()
+        };
+        let found = std::env::split_paths(&std::env::var_os("PATH")?)
+            .map(|d| d.join(&exe))
+            .find(|c| c.is_file())?;
+        return std::fs::canonicalize(found).ok();
+    }
+    std::fs::canonicalize(p).ok()
+}
+
+fn same_bin(a: &Path, b: &Path) -> bool {
+    match (canonical_bin(a), canonical_bin(b)) {
+        (Some(x), Some(y)) if cfg!(windows) => {
+            x.to_string_lossy().to_lowercase() == y.to_string_lossy().to_lowercase()
+        }
+        (Some(x), Some(y)) => x == y,
+        _ => false,
+    }
 }
 
 fn client_for(cfg: &ServiceConfig, key: &str) -> Result<SyncthingClient> {
@@ -367,8 +500,12 @@ fn client_for(cfg: &ServiceConfig, key: &str) -> Result<SyncthingClient> {
 pub fn wait_ready(cfg: &ServiceConfig, key: &str, timeout: Duration) -> Result<String> {
     let c = client_for(cfg, key)?;
     let start = Instant::now();
-    let mut last = String::new();
+    let mut last = String::from("no listener on the GUI port yet");
     while start.elapsed() < timeout {
+        if !listener_is_ours(cfg) {
+            std::thread::sleep(Duration::from_millis(300));
+            continue;
+        }
         match c.my_id() {
             Ok(id) => return Ok(id),
             Err(e) => last = e.to_string(),
@@ -378,8 +515,12 @@ pub fn wait_ready(cfg: &ServiceConfig, key: &str, timeout: Duration) -> Result<S
     Err(ServiceError::NotReady(last))
 }
 
-/// Asks a running instance to exit cleanly (exit 0: not restarted).
+/// Asks a running instance to exit cleanly (exit 0: not restarted). Skipped
+/// unless the listener is verified to be ours; `platform_stop` follows.
 fn request_shutdown(cfg: &ServiceConfig) {
+    if !listener_is_ours(cfg) {
+        return;
+    }
     if let Ok(Some(key)) = secrets::load_api_key() {
         if let Ok(c) = client_for(cfg, &key) {
             let _ = c.shutdown();
@@ -403,10 +544,13 @@ pub fn install(cfg: &ServiceConfig) -> Result<String> {
     // Stop a running instance before touching its config.
     request_shutdown(cfg);
     platform_stop(os)?;
-    let gui = provision_home(cfg)?;
-    secrets::store_api_key(&gui.api_key).map_err(ServiceError::Secrets)?;
+    let p = provision_home(cfg)?;
+    secrets::store_api_key(&p.gui.api_key).map_err(ServiceError::Secrets)?;
+    if let Some(pw) = &p.new_gui_password {
+        secrets::store_gui_password(pw).map_err(ServiceError::Secrets)?;
+    }
     platform_register_and_start(os, cfg)?;
-    wait_ready(cfg, &gui.api_key, Duration::from_secs(45))
+    wait_ready(cfg, &p.gui.api_key, Duration::from_secs(45))
 }
 
 /// Stops and removes the service. Never deletes the Syncthing home or any
@@ -417,6 +561,7 @@ pub fn uninstall(cfg: &ServiceConfig) -> Result<()> {
     platform_stop(os)?;
     platform_unregister(os)?;
     secrets::delete_api_key().map_err(ServiceError::Secrets)?;
+    // Keep the GUI password: the home (and its bcrypt hash) is kept too.
     Ok(())
 }
 
@@ -424,7 +569,7 @@ pub fn status(cfg: &ServiceConfig) -> Result<ServiceStatus> {
     let os = Os::current().ok_or(ServiceError::Unsupported)?;
     let (installed, running, pid) = platform_status(os)?;
     let device_id = match secrets::load_api_key() {
-        Ok(Some(k)) if running => client_for(cfg, &k)?.my_id().ok(),
+        Ok(Some(k)) if running && listener_is_ours(cfg) => client_for(cfg, &k)?.my_id().ok(),
         _ => None,
     };
     Ok(ServiceStatus {
