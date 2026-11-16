@@ -31,9 +31,9 @@ Legenda: 🤖 roda em agente paralelo · 🔎 verificar docs oficiais antes · �
 ## Fatia 3 — Serviço em segundo plano
 | # | Tarefa | Evidência |
 |---|---|---|
-| 3.1 | 🤖 LaunchAgent + install/uninstall (Mac) | `launchctl print` |
-| 3.2 | 🤖 Task Scheduler "ao logon" (PowerShell) | `Get-ScheduledTask` 🖐 |
-| 3.3 | GUI em 127.0.0.1; API key → Keychain/Credential Manager | teste + 🖐 Windows |
+| ✅ 3.1 | 🤖 LaunchAgent + install/uninstall (Mac) | `launchctl print` |
+| 3.2 | 🤖 Task Scheduler "ao logon" (gerado em Rust, registrado via PowerShell) | job `windows-service` no CI registra/inicia/remove de verdade; gatilho de logon e reboot 🖐 |
+| ✅ 3.3 | GUI em 127.0.0.1; API key → Keychain/Credential Manager | teste + 🖐 Windows |
 | 3.4 | Reboot mantém sync sem abrir o app | 🖐 |
 
 ## Fatia 4 — UI de status
@@ -80,3 +80,5 @@ Legenda: 🤖 roda em agente paralelo · 🔎 verificar docs oficiais antes · �
 | Segurança #5 | Em produção passar a API key por `STGUIAPIKEY`/config.xml (0600), nunca por argv; config.xml guarda a key em texto puro | 3.3 |
 | Código #9/#10 | Robustez dos testes: portas (TOCTOU) e `wait_idle` logo após `scan` | contínuo |
 | Segurança #4 | `cargo deny`/`cargo audit` no CI | 7.3 |
+| Fatia 3 (teste real) | Item do Keychain é atrelado ao binário que o criou: builds não assinados/atualizados fazem o macOS pedir permissão de novo → assinar/notarizar o app | 7.1 |
+| Fatia 3 (teste real) | Matar o monitor do Syncthing com kill -9 também encerra o worker e o launchd relança tudo (verificado); no Windows `Stop-ScheduledTask` pode deixar o worker vivo → uninstall já faz shutdown via REST antes | 🖐 Windows |

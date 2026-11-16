@@ -1,0 +1,83 @@
+# Roteiro de testes manuais — Windows (fatia 3: serviço em segundo plano)
+
+> Status: **NÃO VERIFICADO**. Marque ☐ → ☑ conforme executa e preencha a tabela final.
+> Critérios de aceite cobertos (SPEC §6): "Reiniciar qualquer máquina mantém a sync funcionando sem abrir o app" e "Nenhuma porta aberta no roteador".
+> Use PowerShell 7 ou Windows PowerShell 5.1, como usuário comum (sem "Executar como administrador").
+
+Valores de referência: tarefa `\TwinFolders\Syncthing` (gatilho: logon do usuário atual, privilégio mínimo, sem limite de tempo, reinício em falha a cada 1 min, executa na bateria); home `%LOCALAPPDATA%\TwinFolders\syncthing`; log `%LOCALAPPDATA%\TwinFolders\logs\syncthing.log`; GUI `127.0.0.1:8385`; sync tcp `22001`; flags `--no-console --no-browser --no-restart --no-port-probing`.
+
+## 1. Pré-requisitos
+- ☐ Windows 10 22H2 ou 11: `[System.Environment]::OSVersion.Version; (Get-ComputerInfo).OsName` → build >= 19045.
+- ☐ Instalar Syncthing: `winget install --id Syncthing.Syncthing -e` → "Instalado com êxito". Reabra o PowerShell.
+- ☐ Descobrir o binário: `(Get-Command syncthing.exe).Source` → caminho. Se vazio: `Get-ChildItem "$env:LOCALAPPDATA\Microsoft\WinGet\Packages" -Recurse -Filter syncthing.exe | Select -First 1 -Expand FullName`. Guarde: `$BIN = '<caminho>'; & $BIN --version` → `syncthing v...`.
+- ☐ Portas livres: `Get-NetTCPConnection -LocalPort 8385,22001 -State Listen -ErrorAction SilentlyContinue` → sem saída.
+- ☐ Estado limpo: `Get-ScheduledTask -TaskPath '\TwinFolders\' -ErrorAction SilentlyContinue` → sem saída; `twinfolders service status` → não instalado.
+- ☐ (Opcional) módulo para Credential Manager: `Install-Module CredentialManager -Scope CurrentUser` (aceite o prompt do PSGallery).
+
+## 2. Instalar e verificar
+- ☐ `twinfolders service install --syncthing $BIN --gui-port 8385 --listen-port 22001` → código 0 (`$LASTEXITCODE` → 0).
+- ☐ Firewall (primeira execução): se aparecer o prompt do Windows Defender Firewall para `syncthing.exe`, marcar APENAS "Redes privadas" (desmarcar públicas) e permitir. Interface Tailscale deve estar no perfil Privada: `Get-NetConnectionProfile`.
+- ☐ Tarefa registrada: `Get-ScheduledTask -TaskPath '\TwinFolders\' -TaskName Syncthing | Format-List TaskName,State,TaskPath` → `State: Running` (ou `Ready` se ainda não disparou).
+- ☐ Info da tarefa: `Get-ScheduledTaskInfo -TaskPath '\TwinFolders\' -TaskName Syncthing` → `LastTaskResult` 0 (ou 267009 = em execução), `LastRunTime` recente.
+- ☐ Configuração da tarefa: `$t = Get-ScheduledTask -TaskPath '\TwinFolders\' -TaskName Syncthing; $t.Triggers[0].CimClass.CimClassName; $t.Principal.RunLevel; $t.Principal.LogonType; $t.Settings | Select ExecutionTimeLimit,DisallowStartIfOnBatteries,StopIfGoingOnBatteries,RestartCount,RestartInterval` → gatilho `MSFT_TaskLogonTrigger`; RunLevel `Limited`; LogonType `Interactive`; `ExecutionTimeLimit` `PT0S`; baterias: `False`/`False`; `RestartInterval` `PT1M`; `RestartCount` >= 1.
+- ☐ Processo rodando: `Get-Process syncthing | Select Id,Path,StartTime` → um processo (o `Path` bate com `$BIN`).
+- ☐ `twinfolders service status` → instalado: sim, rodando: sim, PID igual ao de `Get-Process`, GUI `127.0.0.1:8385`, device ID.
+- ☐ Log: `Get-Content "$env:LOCALAPPDATA\TwinFolders\logs\syncthing.log" -Tail 20` → linhas do Syncthing ("GUI and API listening on 127.0.0.1:8385").
+- ☐ Ping SEM chave: `try { Invoke-RestMethod http://127.0.0.1:8385/rest/system/ping } catch { $_.Exception.Response.StatusCode.value__ }` → `403`.
+- ☐ Obter a chave (a): `cmdkey /list | Select-String twinfolders` → mostra alvo contendo `twinfolders` / `syncthing-api-key` (cmdkey NÃO exibe a senha).
+- ☐ Obter a chave (b): `$KEY = (Get-StoredCredential -Target 'twinfolders:syncthing-api-key').GetNetworkCredential().Password` (ajuste o Target conforme o mostrado por `cmdkey /list`). Alternativa: `$KEY = ([xml](Get-Content "$env:LOCALAPPDATA\TwinFolders\syncthing\config.xml")).configuration.gui.apikey`. `$KEY.Length` → > 0.
+- ☐ Ping COM chave: `Invoke-RestMethod http://127.0.0.1:8385/rest/system/ping -Headers @{ 'X-API-Key' = $KEY }` → `ping: pong`.
+
+## 3. Verificações de segurança
+- ☐ 8385 só em loopback: `Get-NetTCPConnection -LocalPort 8385 -State Listen | Select LocalAddress,LocalPort,OwningProcess` → `LocalAddress` = `127.0.0.1` (NÃO `0.0.0.0` nem `::`); `OwningProcess` = PID do syncthing.
+- ☐ Porta de sync: `Get-NetTCPConnection -LocalPort 22001 -State Listen` → escutando em 22001.
+- ☐ Chave fora da linha de comando: `(Get-CimInstance Win32_Process -Filter "Name='syncthing.exe'").CommandLine` → contém `--no-console --no-browser --no-restart --no-port-probing` e NÃO contém `$KEY` nem `apikey`. Teste: `(Get-CimInstance Win32_Process -Filter "Name='syncthing.exe'").CommandLine -like "*$KEY*"` → `False`.
+- ☐ Chave fora do XML da tarefa: `(Export-ScheduledTask -TaskPath '\TwinFolders\' -TaskName Syncthing) -like "*$KEY*"` → `False`; e `... -match 'apikey'` → `False`.
+- ☐ Opções do config.xml: `Select-String -Path "$env:LOCALAPPDATA\TwinFolders\syncthing\config.xml" -Pattern '<(natEnabled|relaysEnabled|globalAnnounceEnabled|urAccepted)>'` → `natEnabled`, `relaysEnabled`, `globalAnnounceEnabled` = `false`; `urAccepted` = `-1`.
+- ☐ Regras de firewall: `Get-NetFirewallRule -DisplayName '*syncthing*' | Select DisplayName,Profile,Action,Enabled` → perfil `Private` apenas (sem `Public`/`Any`).
+- ☐ Roteador (opcional): na página do roteador, UPnP/NAT-PMP/redirecionamento → nenhum mapeamento novo para 22001/8385.
+
+## 4. Resiliência
+- ☐ Anotar PID: `$old = (Get-Process syncthing).Id; $old`.
+- ☐ Crash: `Stop-Process -Id $old -Force` e aguardar até ~1 min: `Start-Sleep 75; Get-Process syncthing | Select Id` → NOVO PID diferente de `$old`.
+- ☐ `Get-ScheduledTaskInfo -TaskPath '\TwinFolders\' -TaskName Syncthing | Select LastRunTime,LastTaskResult` → `LastRunTime` atualizado.
+- ☐ Atenção: encerrar só o `syncthing.exe` filho (monitor + filho) — confirme com `Get-CimInstance Win32_Process -Filter "Name='syncthing.exe'" | Select ProcessId,ParentProcessId` que mata o processo correto; com `--no-restart` há um único processo.
+- ☐ Ping com chave volta a `pong` após o restart.
+- ☐ Desligamento limpo: `Invoke-RestMethod -Method Post http://127.0.0.1:8385/rest/system/shutdown -Headers @{ 'X-API-Key' = $KEY }` → `ok: shutting down`.
+- ☐ Comportamento esperado no Windows: o processo sai com código 0, a tarefa TERMINA (`Get-ScheduledTask ... | Select State` → `Ready`) e NÃO é reiniciada (a reinicialização por falha só vale para código != 0). Verificar após 2 min: `Get-Process syncthing -ErrorAction SilentlyContinue` → sem saída. Anote o comportamento observado.
+- ☐ Voltar a subir: `Start-ScheduledTask -TaskPath '\TwinFolders\' -TaskName Syncthing` (ou novo logon) → processo volta; ping com chave = pong.
+- ☐ Sem duplicação: `(Get-Process syncthing).Count` → 1.
+
+## 5. Reinício (critério de aceite)
+- ☐ (Opcional) Parear com o outro computador e compartilhar uma pasta de teste; confirmar sync antes do reboot.
+- ☐ Reiniciar: `Restart-Computer`.
+- ☐ Fazer logon com o mesmo usuário. NÃO abrir o app TwinFolders nem o navegador.
+- ☐ `Get-Process syncthing` → rodando (novo PID, `StartTime` pós-boot).
+- ☐ `Get-ScheduledTaskInfo -TaskPath '\TwinFolders\' -TaskName Syncthing` → `LastRunTime` ≈ horário do logon; `LastTaskResult` 267009 (em execução) ou 0.
+- ☐ Ping com chave → `pong`; sem chave → 403.
+- ☐ Sem janela de console visível e sem navegador aberto (`--no-console --no-browser`).
+- ☐ Com par pareado: criar `teste-reboot-<hora>.txt` na pasta sincronizada da OUTRA máquina → chega neste Windows em poucos segundos: `Get-ChildItem <pasta> -Filter teste-reboot-*`.
+- ☐ Repetir no sentido inverso.
+
+## 6. Desinstalar
+- ☐ Registrar antes: `Get-ChildItem "$env:LOCALAPPDATA\TwinFolders\syncthing"` e a pasta sincronizada.
+- ☐ `twinfolders service uninstall` → código 0.
+- ☐ Tarefa removida: `Get-ScheduledTask -TaskPath '\TwinFolders\' -ErrorAction SilentlyContinue` → sem saída.
+- ☐ Processo parado: `Get-Process syncthing -ErrorAction SilentlyContinue` → sem saída; `Get-NetTCPConnection -LocalPort 8385,22001 -State Listen -ErrorAction SilentlyContinue` → sem saída.
+- ☐ Home preservado: `Test-Path "$env:LOCALAPPDATA\TwinFolders\syncthing\config.xml"` → `True` (e `cert.pem`, `key.pem`, `index-*`).
+- ☐ Pastas sincronizadas intactas: mesmos arquivos de antes.
+- ☐ `twinfolders service status` → não instalado.
+- ☐ Desinstalar de novo (idempotência) → sem erro fatal.
+- ☐ Reinstalar reaproveita o mesmo device ID anotado no passo 2.
+
+## 7. Resultados
+
+| Passo | Resultado | Observações |
+|---|---|---|
+| 1. Pré-requisitos | NÃO VERIFICADO | |
+| 2. Instalar e verificar (tarefa, processo, ping 403/pong, firewall privado) | NÃO VERIFICADO | |
+| 3. Segurança (loopback, chave fora de CommandLine/XML, config.xml, roteador) | NÃO VERIFICADO | |
+| 4a. Resiliência: kill reinicia em ~1 min | NÃO VERIFICADO | |
+| 4b. Desligamento limpo (tarefa termina, sem reinício) | NÃO VERIFICADO | |
+| 5. Reinício sem abrir o app (+ arquivo do par chega) | NÃO VERIFICADO | |
+| 6. Desinstalar (home e pastas preservados) | NÃO VERIFICADO | |

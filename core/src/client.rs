@@ -452,6 +452,11 @@ impl SyncthingClient {
             .connections)
     }
 
+    /// Asks Syncthing to exit cleanly (exit code 0).
+    pub fn shutdown(&self) -> Result<()> {
+        self.post_empty("/rest/system/shutdown", &[])
+    }
+
     pub fn pause_device(&self, device_id: &str) -> Result<()> {
         self.post_empty("/rest/system/pause", &[("device", device_id)])
     }

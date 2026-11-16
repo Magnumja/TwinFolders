@@ -1,0 +1,13 @@
+[package]
+name = "twinfolders-cli"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "TwinFolders command line: background service management"
+
+[[bin]]
+name = "twinfolders"
+path = "src/main.rs"
+
+[dependencies]
+twinfolders-core = { path = "../core" }

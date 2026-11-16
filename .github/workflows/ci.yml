@@ -70,3 +70,50 @@ jobs:
 
       - name: test
         run: cargo test --workspace -- --nocapture
+
+  windows-service:
+    name: service install/uninstall (Windows Task Scheduler, live)
+    runs-on: windows-latest
+    needs: core
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: dtolnay/rust-toolchain@39008827e6b4319a349e9a42dfc90579dd25f1ca # stable
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+      - name: Install Syncthing (pinned SHA-256)
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          name="syncthing-windows-amd64-${SYNCTHING_VERSION}"
+          mkdir -p "$RUNNER_TEMP/st" && cd "$RUNNER_TEMP/st"
+          gh release download "$SYNCTHING_VERSION" -R syncthing/syncthing --pattern "${name}.zip"
+          test "$(sha256sum "${name}.zip" | awk '{print $1}')" = "3ce7da770f546a8d02b65b2e7ee31f2a3b8b7c3f990ede045590cca4172ecfe1"
+          unzip -q "${name}.zip"
+          echo "ST_BIN=$(cygpath -w "$PWD/${name}/syncthing.exe")" >> "$GITHUB_ENV"
+      - name: install -> status -> uninstall
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          cargo build -p twinfolders-cli
+          $tf = ".\target\debug\twinfolders.exe"
+          & $tf service install --syncthing $env:ST_BIN
+          if ($LASTEXITCODE -ne 0) { throw "install failed" }
+          $task = Get-ScheduledTask -TaskPath '\TwinFolders\' -TaskName 'Syncthing'
+          "Task state: $($task.State)"
+          $task.Triggers | Format-List *
+          if ($task.Settings.ExecutionTimeLimit -ne 'PT0S') { throw "time limit set" }
+          & $tf service status
+          # GUI only on loopback
+          $l = Get-NetTCPConnection -LocalPort 8385 -State Listen
+          $l | Format-Table LocalAddress, LocalPort
+          if ($l | Where-Object { $_.LocalAddress -notin @('127.0.0.1','::1') }) { throw "GUI not loopback-only" }
+          # API key not on the process command line
+          $p = Get-CimInstance Win32_Process -Filter "Name='syncthing.exe'"
+          $p | Select-Object ProcessId, CommandLine | Format-List
+          if ($p.CommandLine -match 'apikey') { throw "API key on command line" }
+          & $tf service uninstall
+          if ($LASTEXITCODE -ne 0) { throw "uninstall failed" }
+          if (Get-ScheduledTask -TaskPath '\TwinFolders\' -TaskName 'Syncthing' -ErrorAction SilentlyContinue) { throw "task still registered" }
+          if (-not (Test-Path "$env:LOCALAPPDATA\TwinFolders\syncthing\config.xml")) { throw "home must be kept" }
+          "EVIDENCE: Windows service install/status/uninstall OK"
