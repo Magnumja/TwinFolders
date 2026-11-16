@@ -27,6 +27,11 @@ pub enum Error {
     Transport(String),
     /// Response body was not the JSON we expected.
     Decode(String),
+    /// Base URL is not a loopback address (the API key must never leave
+    /// this machine).
+    NotLoopback(String),
+    /// Folder ID unsafe to place in a URL (`[A-Za-z0-9._-]{1,64}`, not `.`/`..`).
+    InvalidFolderId(String),
 }
 
 impl fmt::Display for Error {
@@ -36,6 +41,8 @@ impl fmt::Display for Error {
             Error::Http { status, body } => write!(f, "Syncthing HTTP {status}: {body}"),
             Error::Transport(e) => write!(f, "cannot reach Syncthing: {e}"),
             Error::Decode(e) => write!(f, "unexpected Syncthing response: {e}"),
+            Error::NotLoopback(u) => write!(f, "refusing non-loopback Syncthing address: {u}"),
+            Error::InvalidFolderId(id) => write!(f, "invalid folder ID: {id:?}"),
         }
     }
 }
@@ -267,18 +274,76 @@ const DEFAULT_TIMEOUT: Duration = Duration::from_secs(10);
 
 type Response = ureq::http::Response<ureq::Body>;
 
+/// Max bytes of an error body kept for messages/logs.
+const MAX_ERROR_BODY: usize = 512;
+
+/// True only for `http(s)://{127.0.0.1|localhost|[::1]}[:port][/...]`.
+fn is_loopback_url(url: &str) -> bool {
+    let rest = match url.split_once("://") {
+        Some(("http" | "https", rest)) => rest,
+        _ => return false,
+    };
+    let authority = rest.split(['/', '?', '#']).next().unwrap_or("");
+    if authority.contains('@') {
+        return false;
+    }
+    let host = if let Some(v6) = authority.strip_prefix('[') {
+        match v6.split_once(']') {
+            Some((h, tail)) if tail.is_empty() || tail.starts_with(':') => return h == "::1",
+            _ => return false,
+        }
+    } else {
+        authority.split(':').next().unwrap_or("")
+    };
+    matches!(host, "127.0.0.1" | "localhost")
+}
+
+/// Folder IDs are interpolated into URL paths, so only a safe charset is
+/// allowed. Syncthing's own generated IDs (`abcde-12345`) satisfy this.
+pub fn validate_folder_id(id: &str) -> Result<()> {
+    let ok = (1..=64).contains(&id.len())
+        && id != "."
+        && id != ".."
+        && id
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'_' | b'-'));
+    if ok {
+        Ok(())
+    } else {
+        Err(Error::InvalidFolderId(id.to_string()))
+    }
+}
+
+fn sanitize_body(body: &str) -> String {
+    let clean: String = body.chars().filter(|c| !c.is_control()).collect();
+    if clean.len() <= MAX_ERROR_BODY {
+        return clean;
+    }
+    let mut cut = MAX_ERROR_BODY;
+    while !clean.is_char_boundary(cut) {
+        cut -= 1;
+    }
+    format!("{}…", &clean[..cut])
+}
+
 impl SyncthingClient {
-    /// `base_url` like `http://127.0.0.1:8384`.
-    pub fn new(base_url: &str, api_key: &str) -> Self {
+    /// `base_url` like `http://127.0.0.1:8384`. Only loopback addresses are
+    /// accepted, and redirects are never followed: ureq keeps custom headers
+    /// such as `X-API-Key` across redirects, which would leak the key.
+    pub fn new(base_url: &str, api_key: &str) -> Result<Self> {
+        if !is_loopback_url(base_url) {
+            return Err(Error::NotLoopback(base_url.to_string()));
+        }
         let config = ureq::Agent::config_builder()
             .http_status_as_error(false)
+            .max_redirects(0)
             .timeout_connect(Some(Duration::from_secs(3)))
             .build();
-        Self {
+        Ok(Self {
             base: base_url.trim_end_matches('/').to_string(),
             api_key: api_key.to_string(),
             agent: ureq::Agent::new_with_config(config),
-        }
+        })
     }
 
     fn url(&self, path: &str) -> String {
@@ -292,7 +357,10 @@ impl SyncthingClient {
             401 | 403 => Err(Error::Unauthorized),
             _ => {
                 let body = resp.body_mut().read_to_string().unwrap_or_default();
-                Err(Error::Http { status, body })
+                Err(Error::Http {
+                    status,
+                    body: sanitize_body(&body),
+                })
             }
         }
     }
@@ -421,6 +489,7 @@ impl SyncthingClient {
 
     /// Creates or replaces a folder by ID.
     pub fn put_folder(&self, folder: &Folder) -> Result<()> {
+        validate_folder_id(&folder.id)?;
         self.send_json(
             "PUT",
             &format!("/rest/config/folders/{}", folder.id),
@@ -516,6 +585,8 @@ impl SyncthingClient {
     /// `timeout_s` elapses with no events. `types` filters by event type.
     pub fn events(&self, since: u64, timeout_s: u64, types: &[&str]) -> Result<Vec<Event>> {
         let since_s = since.to_string();
+        // 0 would mean "server default (60s)" and trip our client timeout.
+        let timeout_s = timeout_s.max(1);
         let timeout_str = timeout_s.to_string();
         let joined = types.join(",");
         let mut q = vec![

@@ -45,21 +45,42 @@ fn days_in_month(y: u32, m: u32) -> u32 {
     }
 }
 
+/// Syncthing's own control files must never be renamed/archived by a plan.
+const CONTROL_NAMES: &[&str] = &[".stignore", ".stfolder"];
+const VERSIONS_DIR: &str = ".stversions";
+
+/// Peer-controlled names reach the conflict planner, so only plain relative
+/// `/`-separated paths are accepted: no absolute paths, empty/`.`/`..`
+/// components, backslashes or colons (traversal/drive letters on Windows),
+/// NUL, or anything under `.stversions`.
+fn is_safe_relative(path: &str) -> bool {
+    !path.starts_with('/')
+        && !path.contains(['\\', ':', '\0'])
+        && path
+            .split('/')
+            .all(|c| !c.is_empty() && c != "." && c != ".." && c != VERSIONS_DIR)
+}
+
 /// Parses a path as a Syncthing conflict copy; `None` for anything else,
 /// including malformed markers.
 pub fn parse(path: &str) -> Option<ConflictFile> {
+    if !is_safe_relative(path) {
+        return None;
+    }
     let (dir, name) = match path.rfind('/') {
         Some(i) => path.split_at(i + 1),
         None => ("", path),
     };
     let idx = name.rfind(MARKER)?;
     let stem = &name[..idx];
-    if stem.is_empty() {
+    // "." / ".." would make original_path point outside the file's directory.
+    if stem.is_empty() || stem == "." || stem == ".." {
         return None;
     }
     let rest = &name[idx + MARKER.len()..];
-    // YYYYMMDD-HHMMSS-SHORTID = 8 + 1 + 6 + 1 + 7 bytes
-    let meta = rest.get(..23)?;
+    // YYYYMMDD-HHMMSS-SHORTID = 8 + 1 + 6 + 1 + 7 bytes, all ASCII; checking
+    // ASCII first makes the fixed-offset slicing below panic-free.
+    let meta = rest.get(..23).filter(|m| m.is_ascii())?;
     let ext = &rest[23..];
     if !ext.is_empty() && (!ext.starts_with('.') || ext.len() == 1) {
         return None;
@@ -88,6 +109,10 @@ pub fn parse(path: &str) -> Option<ConflictFile> {
         || minute > 59
         || second > 59
     {
+        return None;
+    }
+    let original_name = format!("{stem}{ext}");
+    if CONTROL_NAMES.contains(&original_name.as_str()) {
         return None;
     }
     Some(ConflictFile {
@@ -421,5 +446,50 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn non_ascii_in_marker_does_not_panic() {
+        // Multi-byte chars inside the 23-byte metadata window must not panic.
+        for name in [
+            "x.sync-conflict-2026é1116-143005-ABCDEF2.txt",
+            "x.sync-conflict-202é111-143005-ABCDEF2.txt",
+            "x.sync-conflict-20261116-14300é-ABCDEF.txt",
+            "x.sync-conflict-20261116-1430é5-ABCDEF2",
+            "x.sync-conflict-20261116-143005-ABCDÉF2.txt",
+            "x.sync-conflict-日本語日本語日本語-ABC",
+        ] {
+            assert_eq!(parse(name), None, "{name}");
+        }
+    }
+
+    #[test]
+    fn dot_and_dotdot_stems_are_rejected() {
+        assert_eq!(parse("..sync-conflict-20261116-143005-ABCDEF2"), None);
+        assert_eq!(parse("a/...sync-conflict-20261116-143005-ABCDEF2"), None);
+        assert_eq!(parse("a/..sync-conflict-20261116-143005-ABCDEF2.txt"), None);
+    }
+
+    #[test]
+    fn unsafe_directory_components_are_rejected() {
+        let tail = ".sync-conflict-20261116-143005-ABCDEF2";
+        for dir in [
+            "../", "a/../", "./", "a//", "/abs/", "..\\..\\", "C:/", "a\0/",
+        ] {
+            let p = format!("{dir}x{tail}.txt");
+            assert_eq!(parse(&p), None, "{p:?}");
+        }
+        // backslash or colon inside the file name itself (traversal on Windows)
+        assert_eq!(parse(&format!("..\\..\\x{tail}")), None);
+        assert_eq!(parse(&format!("c:x{tail}")), None);
+    }
+
+    #[test]
+    fn syncthing_control_files_are_never_conflict_targets() {
+        let tail = ".sync-conflict-20261116-143005-ABCDEF2";
+        assert_eq!(parse(&format!(".stignore{tail}")), None);
+        assert_eq!(parse(&format!("sub/.stfolder{tail}")), None);
+        assert_eq!(parse(&format!(".stversions/a{tail}.txt")), None);
+        assert!(parse(&format!("docs/a{tail}.txt")).is_some());
     }
 }

@@ -42,6 +42,7 @@ pub fn render(extra: &[&str]) -> String {
 /// Effective pattern lines: trimmed, without blank lines or `//` comments.
 pub fn parse(content: &str) -> Vec<String> {
     content
+        .trim_start_matches('\u{feff}') // UTF-8 BOM from Windows Notepad
         .lines() // handles both \n and \r\n
         .map(str::trim)
         .filter(|l| !l.is_empty() && !l.starts_with("//"))
@@ -200,6 +201,14 @@ mod tests {
         assert_eq!(
             parse(&out),
             DEFAULTS.iter().map(|s| s.to_string()).collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn parse_strips_utf8_bom() {
+        assert_eq!(
+            parse("\u{feff}(?d)Thumbs.db\r\nnode_modules"),
+            vec!["(?d)Thumbs.db", "node_modules"]
         );
     }
 }

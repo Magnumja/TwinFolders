@@ -9,139 +9,18 @@
 //! Locally the tests are skipped with a message if it's missing; in CI
 //! (`CI` set) a missing binary is a failure.
 
-use std::fs;
-use std::net::TcpListener;
-use std::path::{Path, PathBuf};
-use std::process::{Child, Command, Stdio};
-use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+mod common;
 
+use std::fs;
+use std::path::{Path, PathBuf};
+use std::time::{Duration, Instant};
+
+use common::{read, require_syncthing, temp_root, wait_until, Node};
 use serde_json::json;
-use twinfolders_core::client::{Folder, SyncthingClient, Versioning};
+use twinfolders_core::client::{Folder, Versioning};
 use twinfolders_core::{conflict, stignore};
 
 const FOLDER_ID: &str = "twin-test";
-
-fn syncthing_bin() -> Option<String> {
-    if let Ok(p) = std::env::var("TWINFOLDERS_SYNCTHING") {
-        return Some(p);
-    }
-    let ok = Command::new("syncthing")
-        .arg("--version")
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .status()
-        .map(|s| s.success())
-        .unwrap_or(false);
-    ok.then(|| "syncthing".to_string())
-}
-
-/// Returns None (and the test should return early) when Syncthing is absent.
-fn require_syncthing() -> Option<String> {
-    match syncthing_bin() {
-        Some(b) => Some(b),
-        None if std::env::var_os("CI").is_some() => panic!("syncthing binary required in CI"),
-        None => {
-            eprintln!("SKIPPED: syncthing not found on PATH");
-            None
-        }
-    }
-}
-
-fn free_port() -> u16 {
-    TcpListener::bind("127.0.0.1:0")
-        .unwrap()
-        .local_addr()
-        .unwrap()
-        .port()
-}
-
-fn wait_until(timeout: Duration, what: &str, mut f: impl FnMut() -> bool) {
-    let start = Instant::now();
-    while start.elapsed() < timeout {
-        if f() {
-            return;
-        }
-        std::thread::sleep(Duration::from_millis(250));
-    }
-    panic!("timed out after {timeout:?} waiting for: {what}");
-}
-
-struct Node {
-    name: &'static str,
-    root: PathBuf,
-    listen_port: u16,
-    client: SyncthingClient,
-    id: String,
-    child: Child,
-}
-
-impl Node {
-    fn start(bin: &str, name: &'static str, root: &Path) -> Node {
-        let home = root.join(format!("{name}-home"));
-        fs::create_dir_all(&home).unwrap();
-        let gui_port = free_port();
-        let listen_port = free_port();
-        let api_key = format!("key-{name}-{gui_port}");
-        let child = Command::new(bin)
-            .args([
-                "serve",
-                "--no-browser",
-                "--no-restart",
-                "--no-upgrade",
-                "--log-level=WARN",
-            ])
-            .arg(format!("--home={}", home.display()))
-            .arg(format!("--gui-address=http://127.0.0.1:{gui_port}"))
-            .arg(format!("--gui-apikey={api_key}"))
-            .stdout(Stdio::null())
-            .stderr(fs::File::create(root.join(format!("{name}.log"))).unwrap())
-            .spawn()
-            .expect("spawn syncthing");
-        let client = SyncthingClient::new(&format!("http://127.0.0.1:{gui_port}"), &api_key);
-        wait_until(Duration::from_secs(30), "daemon REST API up", || {
-            client.ping().is_ok()
-        });
-        // Isolate: no internet discovery/relays, fixed loopback listen port.
-        client
-            .patch_options(&json!({
-                "listenAddresses": [format!("tcp://127.0.0.1:{listen_port}")],
-                "globalAnnounceEnabled": false,
-                "localAnnounceEnabled": false,
-                "relaysEnabled": false,
-                "natEnabled": false,
-                "crashReportingEnabled": false,
-                "urAccepted": -1
-            }))
-            .unwrap();
-        let id = client.my_id().unwrap();
-        Node {
-            name,
-            root: root.to_path_buf(),
-            listen_port,
-            client,
-            id,
-            child,
-        }
-    }
-
-    fn folder_path(&self) -> PathBuf {
-        self.root.join(format!("{}-folder", self.name))
-    }
-
-    fn connected_to(&self, other: &Node) -> bool {
-        self.client
-            .connections()
-            .map(|c| c.get(&other.id).map(|x| x.connected).unwrap_or(false))
-            .unwrap_or(false)
-    }
-}
-
-impl Drop for Node {
-    fn drop(&mut self) {
-        let _ = self.child.kill();
-        let _ = self.child.wait();
-    }
-}
 
 /// Two paired daemons sharing FOLDER_ID, with the default .stignore.
 struct Pair {
@@ -162,12 +41,7 @@ impl Drop for Pair {
 }
 
 fn setup_pair(bin: &str, test: &str) -> Pair {
-    let nanos = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap()
-        .as_nanos();
-    let root = std::env::temp_dir().join(format!("twinfolders-it-{test}-{nanos}"));
-    fs::create_dir_all(&root).unwrap();
+    let root = temp_root(test);
     let a = Node::start(bin, "mac", &root);
     let b = Node::start(bin, "windows", &root);
 
@@ -201,10 +75,6 @@ fn setup_pair(bin: &str, test: &str) -> Pair {
         a.connected_to(&b) && b.connected_to(&a)
     });
     Pair { a, b, root }
-}
-
-fn read(path: &Path) -> Option<String> {
-    fs::read_to_string(path).ok()
 }
 
 fn wait_idle(n: &Node) {

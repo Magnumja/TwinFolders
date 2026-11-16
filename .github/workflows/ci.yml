@@ -23,22 +23,27 @@ jobs:
           - os: macos-latest
             asset: macos-arm64
             ext: zip
+            sha256: 2df075b463231a307c91da657157beaed06383a941ba7ea04d33d536e3c4af38
           - os: windows-latest
             asset: windows-amd64
             ext: zip
+            sha256: 3ce7da770f546a8d02b65b2e7ee31f2a3b8b7c3f990ede045590cca4172ecfe1
           - os: ubuntu-latest
             asset: linux-amd64
             ext: tar.gz
+            sha256: 2edc416e7ed136b7c858ed5f3f02a3b8316589605e54c380228ceea7acbf0142
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@39008827e6b4319a349e9a42dfc90579dd25f1ca # stable
         with:
           components: clippy, rustfmt
 
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
 
-      - name: Install Syncthing ${{ env.SYNCTHING_VERSION }} (official release, checksum verified)
+      # SHA-256 values are pinned in this file (reviewed in git), not read from
+      # the release, so a tampered release asset fails the build.
+      - name: Install Syncthing ${{ env.SYNCTHING_VERSION }} (official release, pinned SHA-256)
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
@@ -47,8 +52,8 @@ jobs:
           name="syncthing-${{ matrix.asset }}-${SYNCTHING_VERSION}"
           mkdir -p "$RUNNER_TEMP/st" && cd "$RUNNER_TEMP/st"
           gh release download "$SYNCTHING_VERSION" -R syncthing/syncthing \
-            --pattern "${name}.${{ matrix.ext }}" --pattern "sha256sum.txt.asc"
-          expected=$(grep " ${name}.${{ matrix.ext }}\$" sha256sum.txt.asc | awk '{print $1}')
+            --pattern "${name}.${{ matrix.ext }}"
+          expected="${{ matrix.sha256 }}"
           if command -v sha256sum >/dev/null; then actual=$(sha256sum "${name}.${{ matrix.ext }}" | awk '{print $1}');
           else actual=$(shasum -a 256 "${name}.${{ matrix.ext }}" | awk '{print $1}'); fi
           test -n "$expected" && test "$expected" = "$actual"

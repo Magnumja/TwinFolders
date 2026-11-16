@@ -23,8 +23,8 @@ Legenda: 🤖 roda em agente paralelo · 🔎 verificar docs oficiais antes · �
 ## Fatia 2 — Pareamento e pasta única
 | # | Tarefa | Evidência |
 |---|---|---|
-| 2.1 | Device ID local, adicionar peer, aprovação pendente | teste integração |
-| 2.2 | Compartilhar pasta com mesmo Folder ID + `.stignore` | teste integração |
+| ✅ 2.1 | Device ID local, adicionar peer, aprovação pendente | teste integração |
+| ✅ 2.2 | Compartilhar pasta com mesmo Folder ID + `.stignore` | teste integração |
 | ✅ 2.3 | Offline (pause) → editar → resume → convergência | teste integração |
 | ✅ 2.4 | Edição concorrente → conflito detectado | teste integração |
 
@@ -47,7 +47,7 @@ Legenda: 🤖 roda em agente paralelo · 🔎 verificar docs oficiais antes · �
 | # | Tarefa | Evidência |
 |---|---|---|
 | 5.1 | Lista de conflitos + notificação nativa | screenshot |
-| 5.2 | Manter minha / outra / ambas (descartado → versões) | unit + integração |
+| 5.2 | Manter minha / outra / ambas (descartado → versões). **Executor deve canonicalizar cada caminho do plano e recusar se sair da raiz da pasta** (achado da revisão de segurança) | unit + integração |
 | 5.3 | Config de versionamento (staggered/trashcan + retenção) | teste integração |
 
 ## Fatia 6 — SSH via Tailscale
@@ -69,3 +69,14 @@ Legenda: 🤖 roda em agente paralelo · 🔎 verificar docs oficiais antes · �
 - 0.2 e 1.2/1.3/1.4 em agentes paralelos (lógica pura, independentes).
 - 3.1 e 3.2 em paralelo (SOs diferentes).
 - Revisões independentes (código e segurança) ao fim das fatias 2, 5 e 7.
+
+## Pendências das revisões (2026-11-16) — atribuídas a fatias
+| Origem | Item | Fatia |
+|---|---|---|
+| Código #4 | Após reinício do daemon os IDs de evento recomeçam: re-sincronizar `since` (comparar `startTime` de `/rest/system/status`) | 4.2 |
+| Código #5 | Distinguir `Timeout` de `Connect` em escritas (resultado indeterminado) | 4.2 |
+| Código #7 | `(?i)` nos arquivos de sistema do `.stignore`; avisar na UI que `build/dist/target` são ignorados em qualquer nível | 4.3 |
+| Segurança #1 | Executor de conflitos: rename sem sobrescrever (`RENAME_NOREPLACE`/`MoveFileEx` sem replace), não seguir symlinks, KeepBoth com nome único | 5.2 |
+| Segurança #5 | Em produção passar a API key por `STGUIAPIKEY`/config.xml (0600), nunca por argv; config.xml guarda a key em texto puro | 3.3 |
+| Código #9/#10 | Robustez dos testes: portas (TOCTOU) e `wait_idle` logo após `scan` | contínuo |
+| Segurança #4 | `cargo deny`/`cargo audit` no CI | 7.3 |

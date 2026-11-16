@@ -2,12 +2,15 @@
 //! Response bodies are trimmed copies of real Syncthing v2.1 responses.
 
 use mockito::{Matcher, Server};
-use twinfolders_core::client::{Error, Folder, FolderDevice, SyncthingClient, Versioning};
+use twinfolders_core::client::{
+    Error, Folder, FolderDevice, PendingFolder, SyncthingClient, Versioning,
+};
+use twinfolders_core::pairing;
 
 const KEY: &str = "test-api-key";
 
 fn client(server: &Server) -> SyncthingClient {
-    SyncthingClient::new(&server.url(), KEY)
+    SyncthingClient::new(&server.url(), KEY).unwrap()
 }
 
 #[test]
@@ -50,13 +53,13 @@ fn other_http_errors_keep_status_and_body() {
 
 #[test]
 fn transport_error_when_server_down() {
-    let c = SyncthingClient::new("http://127.0.0.1:1", KEY);
+    let c = SyncthingClient::new("http://127.0.0.1:1", KEY).unwrap();
     assert!(matches!(c.ping(), Err(Error::Transport(_))));
 }
 
 #[test]
 fn debug_output_never_contains_api_key() {
-    let c = SyncthingClient::new("http://127.0.0.1:8384", "super-secret-key");
+    let c = SyncthingClient::new("http://127.0.0.1:8384", "super-secret-key").unwrap();
     assert!(!format!("{c:?}").contains("super-secret-key"));
 }
 
@@ -231,7 +234,101 @@ fn base_url_trailing_slash_is_tolerated() {
         .with_body(r#"{"ping":"pong"}"#)
         .create();
     SyncthingClient::new(&format!("{}/", s.url()), KEY)
+        .unwrap()
         .ping()
         .unwrap();
     m.assert();
+}
+
+// ---------- security regressions (audit 2026-11-16) ----------
+
+#[test]
+fn redirects_are_never_followed_so_the_key_cannot_leak() {
+    let mut s = Server::new();
+    let elsewhere = s.mock("GET", "/elsewhere").expect(0).create();
+    s.mock("GET", "/rest/system/ping")
+        .with_status(307)
+        .with_header("Location", &format!("{}/elsewhere", s.url()))
+        .create();
+    assert!(matches!(
+        client(&s).ping(),
+        Err(Error::Http { status: 307, .. })
+    ));
+    elsewhere.assert();
+}
+
+#[test]
+fn only_loopback_base_urls_are_accepted() {
+    for ok in [
+        "http://127.0.0.1:8384",
+        "http://localhost:8384",
+        "http://[::1]:8384",
+        "https://127.0.0.1:8384/",
+    ] {
+        assert!(SyncthingClient::new(ok, KEY).is_ok(), "{ok}");
+    }
+    for bad in [
+        "http://192.168.1.5:8384",
+        "http://example.com",
+        "http://127.0.0.1.evil.com:8384",
+        "ftp://127.0.0.1",
+        "127.0.0.1:8384",
+        "http://user@evil.com@127.0.0.1",
+    ] {
+        assert!(
+            matches!(SyncthingClient::new(bad, KEY), Err(Error::NotLoopback(_))),
+            "{bad}"
+        );
+    }
+}
+
+#[test]
+fn hostile_folder_ids_never_reach_the_url() {
+    let mut s = Server::new();
+    let any_put = s.mock("PUT", Matcher::Any).expect(0).create();
+    for id in ["a/../options", "x?a=b", "x#", "", "a b", &"x".repeat(65)] {
+        let f = Folder::new(id, "l", "/p", &["A"]);
+        assert!(
+            matches!(client(&s).put_folder(&f), Err(Error::InvalidFolderId(_))),
+            "{id:?}"
+        );
+    }
+    any_put.assert();
+}
+
+#[test]
+fn error_bodies_are_truncated_and_stripped_of_control_chars() {
+    let mut s = Server::new();
+    let body = format!("\u{1b}[31mred{}", "x".repeat(5000));
+    s.mock("GET", "/rest/system/status")
+        .with_status(500)
+        .with_body(body)
+        .create();
+    match client(&s).my_id() {
+        Err(Error::Http { body, .. }) => {
+            assert!(body.len() <= 520, "len {}", body.len());
+            assert!(!body.chars().any(|c| c.is_control()));
+        }
+        other => panic!("unexpected {other:?}"),
+    }
+}
+
+#[test]
+fn accepting_an_offer_never_overwrites_an_existing_folder() {
+    let mut s = Server::new();
+    s.mock("GET", "/rest/config/folders")
+        .with_body(r#"[{"id":"twin-docs","label":"Docs","path":"/x/Docs","type":"sendreceive","devices":[{"deviceID":"A"}]}]"#)
+        .create();
+    let put = s.mock("PUT", Matcher::Any).expect(0).create();
+    let offer = PendingFolder {
+        folder_id: "twin-docs".into(),
+        offered_by: "EVIL".into(),
+        label: "Docs".into(),
+        time: String::new(),
+    };
+    let dir = std::env::temp_dir().join("twinfolders-unit-accept-existing");
+    let r = pairing::accept_folder(&client(&s), &offer, "ME", &dir);
+    assert!(matches!(r, Err(pairing::Error::AlreadyExists(_))), "{r:?}");
+    put.assert();
+    let _ = std::fs::remove_dir_all(dir);
 }
