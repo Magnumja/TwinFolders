@@ -23,8 +23,8 @@ use twinfolders_core::pairing::{self, ShareRequest};
 use twinfolders_core::preflight;
 use twinfolders_core::resolve::{self, ConflictEntry, Outcome};
 use twinfolders_core::service::{self, ServiceConfig};
+use twinfolders_core::stconfig;
 use twinfolders_core::versioning::Choice;
-use twinfolders_core::{secrets, stconfig};
 
 /// Events that change what the panel shows.
 const WATCHED_EVENTS: &[&str] = &[
@@ -166,7 +166,7 @@ fn home() -> Result<(PathBuf, bool), String> {
 
 fn connect() -> Result<SyncthingClient, Snapshot> {
     let not_installed = |message: String| Snapshot::NotInstalled { message };
-    let (home, dev) = home().map_err(not_installed)?;
+    let (home, _dev) = home().map_err(not_installed)?;
     let xml = std::fs::read_to_string(home.join("config.xml")).map_err(|_| {
         not_installed(format!(
             "O serviço em segundo plano não está instalado ({} não existe). Rode `twinfolders service install`.",
@@ -182,11 +182,18 @@ fn connect() -> Result<SyncthingClient, Snapshot> {
         .ok_or_else(|| {
             not_installed(format!("endereço inválido no config.xml: {}", gui.address))
         })?;
-    let key = if dev {
-        gui.api_key.clone()
-    } else {
-        secrets::resolve_api_key(&home).map_err(not_installed)?
-    };
+    // config.xml (owner-only, written by the service install) is the source
+    // of truth for the key; the OS credential store only mirrors it. Reading
+    // the store from the app would trigger a Keychain prompt on macOS (the
+    // item belongs to the CLI binary that created it) and block the first
+    // connection until someone answers it, without adding any protection.
+    let key = gui.api_key.clone();
+    if key.is_empty() {
+        return Err(not_installed(
+            "config.xml sem chave da API; reinstale o serviço com `twinfolders service install`"
+                .into(),
+        ));
+    }
     let cfg = ServiceConfig {
         syncthing_bin: PathBuf::new(),
         home,

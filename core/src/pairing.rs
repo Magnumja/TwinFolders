@@ -235,7 +235,12 @@ mod tests {
             .duration_since(UNIX_EPOCH)
             .unwrap()
             .as_nanos();
-        std::env::temp_dir().join(format!("twinfolders-unit-{name}-{n}"))
+        static C: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+        let c = C.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        std::env::temp_dir().join(format!(
+            "twinfolders-unit-{name}-{}-{n}-{c}",
+            std::process::id()
+        ))
     }
 
     #[test]

@@ -103,9 +103,26 @@ impl Node {
             .expect("spawn syncthing");
         let client =
             SyncthingClient::new(&format!("http://127.0.0.1:{gui_port}"), &api_key).unwrap();
-        wait_until(Duration::from_secs(30), "daemon REST API up", || {
-            client.ping().is_ok()
-        });
+        // First start on a fresh Windows CI runner (key generation,
+        // Defender scanning the new binary) can take well over 30 s.
+        let log = root.join(format!("{name}.log"));
+        let start = Instant::now();
+        while client.ping().is_err() {
+            if start.elapsed() > Duration::from_secs(90) {
+                let tail: String = fs::read_to_string(&log)
+                    .unwrap_or_default()
+                    .lines()
+                    .rev()
+                    .take(20)
+                    .collect::<Vec<_>>()
+                    .into_iter()
+                    .rev()
+                    .collect::<Vec<_>>()
+                    .join("\n");
+                panic!("timed out after 90s waiting for {name} REST API; log tail:\n{tail}");
+            }
+            std::thread::sleep(Duration::from_millis(250));
+        }
         // Isolate: no internet discovery/relays, fixed loopback listen port.
         client
             .patch_options(&json!({

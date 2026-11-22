@@ -528,13 +528,23 @@ pub fn wait_ready(cfg: &ServiceConfig, key: &str, timeout: Duration) -> Result<S
     Err(ServiceError::NotReady(last))
 }
 
+/// API key of the service instance, read from its owner-only `config.xml`
+/// (the source of truth). Not from the OS credential store: on macOS the
+/// Keychain item is tied to the binary that created it, so a rebuilt CLI or
+/// the app would block on a permission prompt.
+pub fn api_key_from_config(cfg: &ServiceConfig) -> Option<String> {
+    let xml = std::fs::read_to_string(cfg.home.join("config.xml")).ok()?;
+    let key = crate::stconfig::read_gui(&xml).ok()?.api_key;
+    (!key.is_empty()).then_some(key)
+}
+
 /// Asks a running instance to exit cleanly (exit 0: not restarted). Skipped
 /// unless the listener is verified to be ours; `platform_stop` follows.
 fn request_shutdown(cfg: &ServiceConfig) {
     if !listener_is_ours(cfg) {
         return;
     }
-    if let Ok(Some(key)) = secrets::load_api_key() {
+    if let Some(key) = api_key_from_config(cfg) {
         if let Ok(c) = client_for(cfg, &key) {
             let _ = c.shutdown();
         }
@@ -581,8 +591,8 @@ pub fn uninstall(cfg: &ServiceConfig) -> Result<()> {
 pub fn status(cfg: &ServiceConfig) -> Result<ServiceStatus> {
     let os = Os::current().ok_or(ServiceError::Unsupported)?;
     let (installed, running, pid) = platform_status(os)?;
-    let device_id = match secrets::load_api_key() {
-        Ok(Some(k)) if running && listener_is_ours(cfg) => client_for(cfg, &k)?.my_id().ok(),
+    let device_id = match api_key_from_config(cfg) {
+        Some(k) if running && listener_is_ours(cfg) => client_for(cfg, &k)?.my_id().ok(),
         _ => None,
     };
     Ok(ServiceStatus {

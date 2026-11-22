@@ -97,12 +97,16 @@ mod tests {
     use super::*;
     use std::time::{SystemTime, UNIX_EPOCH};
 
+    /// Unique per test: the clock alone is not enough (macOS has
+    /// microsecond resolution and tests run in parallel).
     fn tmp() -> std::path::PathBuf {
+        static N: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
         let n = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap()
             .as_nanos();
-        std::env::temp_dir().join(format!("twinfolders-guitls-{n}"))
+        let c = N.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        std::env::temp_dir().join(format!("twinfolders-guitls-{}-{n}-{c}", std::process::id()))
     }
 
     #[test]
