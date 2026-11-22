@@ -364,7 +364,7 @@ fn remote_access(c: &SyncthingClient, app: &AppHandle) -> Result<RemoteAccess, S
                 .unwrap_or_default();
             let mut addrs: Vec<&str> = vec![live.as_str()];
             addrs.extend(d.addresses.iter().map(String::as_str));
-            let peer = tailscale::match_device(&peers, &d.name, &addrs);
+            let peer = tailscale::match_device(&peers, &addrs);
             RemoteMachine {
                 user: users.get(&d.device_id).cloned().unwrap_or_else(local_user),
                 host: peer.and_then(|p| p.host()),

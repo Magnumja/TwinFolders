@@ -30,8 +30,11 @@ if ($Undo) {
   Say "Desfazendo a configuração do TwinFolders"
   if (Test-Path $backup) { Copy-Item $backup $conf -Force; Remove-Item $backup; Info "sshd_config anterior restaurado." }
   Get-NetFirewallRule -Name $rule -ErrorAction SilentlyContinue | Remove-NetFirewallRule
-  if (Get-Service sshd -ErrorAction SilentlyContinue) { Restart-Service sshd }
-  Info "Pronto."
+  if (Get-Service sshd -ErrorAction SilentlyContinue) {
+    Stop-Service sshd -ErrorAction SilentlyContinue
+    Set-Service sshd -StartupType Manual
+  }
+  Info "Pronto. O servidor SSH ficou desligado; para religar com segurança, rode o script de novo."
   exit 0
 }
 
@@ -59,56 +62,69 @@ if ($OtherKey -notmatch '^(ssh-ed25519|sk-ssh-ed25519@openssh\.com) [A-Za-z0-9+/
   Die "isso não parece uma chave pública ed25519 (uma linha começando com ssh-ed25519)."
 }
 
-Say "2/5 · Servidor OpenSSH"
+# Order matters: sshd only starts AFTER the firewall is limited to Tailscale
+# and password login is off, so it is never exposed with weaker settings.
+Say "2/5 · Servidor OpenSSH (instalado, ainda desligado)"
 $cap = Get-WindowsCapability -Online -Name "OpenSSH.Server*" | Select-Object -First 1
 if ($cap.State -ne "Installed") {
   Info "Instalando o OpenSSH Server (recurso do Windows)…"
   Add-WindowsCapability -Online -Name $cap.Name | Out-Null
 }
-Set-Service sshd -StartupType Automatic
-Start-Service sshd
-Info "Servidor OpenSSH ligado e iniciando com o Windows."
+Stop-Service sshd -ErrorAction SilentlyContinue
 
-Say "3/5 · Autorizando a chave do outro computador"
-# Contas administradoras usam um arquivo próprio, com ACL restrita
-# (exigência do OpenSSH para Windows).
-$userIsAdmin = $null -ne (Get-LocalGroupMember -SID "S-1-5-32-544" -ErrorAction SilentlyContinue |
-  Where-Object { $_.Name -eq "$env:USERDOMAIN\$env:USERNAME" })
-if ($userIsAdmin) {
-  $auth = "C:\ProgramData\ssh\administrators_authorized_keys"
-} else {
-  $auth = Join-Path $sshDir "authorized_keys"
-}
-if (-not (Test-Path $auth)) { New-Item -ItemType File -Path $auth -Force | Out-Null }
-if ((Get-Content $auth -ErrorAction SilentlyContinue) -contains $OtherKey) {
-  Info "Essa chave já estava autorizada."
-} else {
-  Add-Content -Path $auth -Value $OtherKey -Encoding ascii
-  Info "Autorizada em $auth"
-}
-if ($userIsAdmin) {
-  icacls.exe $auth /inheritance:r /grant "*S-1-5-32-544:F" /grant "SYSTEM:F" | Out-Null
-}
+try {
+  Say "3/5 · Firewall: porta 22 só pela rede do Tailscale"
+  Get-NetFirewallRule -Name "OpenSSH-Server-In-TCP" -ErrorAction SilentlyContinue | Disable-NetFirewallRule
+  Get-NetFirewallRule -Name $rule -ErrorAction SilentlyContinue | Remove-NetFirewallRule
+  New-NetFirewallRule -Name $rule -DisplayName "TwinFolders SSH (Tailscale)" -Direction Inbound -Protocol TCP -LocalPort 22 `
+    -RemoteAddress "100.64.0.0/10", "fd7a:115c:a1e0::/48" -Action Allow | Out-Null
+  Info "A regra padrão do OpenSSH (qualquer rede) foi desativada; só endereços do Tailscale entram."
 
-Say "4/5 · Desligando login por senha (só chaves)"
-if (-not (Test-Path $backup)) { Copy-Item $conf $backup }
-$lines = Get-Content $conf | Where-Object { $_ -notmatch '^\s*#?\s*(PasswordAuthentication|PubkeyAuthentication|PermitEmptyPasswords)\b' }
-$new = @("# TwinFolders: só chaves", "PasswordAuthentication no", "PubkeyAuthentication yes", "PermitEmptyPasswords no") + $lines
-Set-Content -Path $conf -Value $new -Encoding ascii
-& "$env:WINDIR\System32\OpenSSH\sshd.exe" -t
-if ($LASTEXITCODE -ne 0) {
-  Copy-Item $backup $conf -Force
-  Die "a configuração do SSH ficou inválida e foi desfeita. Nada mudou."
-}
-Restart-Service sshd
-Info "Login por senha desligado."
+  Say "4/5 · Autorizando a chave do outro computador"
+  # Contas administradoras usam um arquivo próprio, com ACL restrita
+  # (exigência do OpenSSH para Windows).
+  $userIsAdmin = $null -ne (Get-LocalGroupMember -SID "S-1-5-32-544" -ErrorAction SilentlyContinue |
+    Where-Object { $_.Name -eq "$env:USERDOMAIN\$env:USERNAME" })
+  if ($userIsAdmin) {
+    $auth = "C:\ProgramData\ssh\administrators_authorized_keys"
+  } else {
+    $auth = Join-Path $sshDir "authorized_keys"
+  }
+  if (-not (Test-Path $auth)) { New-Item -ItemType File -Path $auth -Force | Out-Null }
+  if ((Get-Content $auth -ErrorAction SilentlyContinue) -contains $OtherKey) {
+    Info "Essa chave já estava autorizada."
+  } else {
+    Add-Content -Path $auth -Value $OtherKey -Encoding ascii
+    Info "Autorizada em $auth"
+  }
+  if ($userIsAdmin) {
+    icacls.exe $auth /inheritance:r /grant "*S-1-5-32-544:F" /grant "SYSTEM:F" | Out-Null
+  }
 
-Say "5/5 · Firewall: porta 22 só pela rede do Tailscale"
-Get-NetFirewallRule -Name "OpenSSH-Server-In-TCP" -ErrorAction SilentlyContinue | Disable-NetFirewallRule
-Get-NetFirewallRule -Name $rule -ErrorAction SilentlyContinue | Remove-NetFirewallRule
-New-NetFirewallRule -Name $rule -DisplayName "TwinFolders SSH (Tailscale)" -Direction Inbound -Protocol TCP -LocalPort 22 `
-  -RemoteAddress "100.64.0.0/10", "fd7a:115c:a1e0::/48" -Action Allow | Out-Null
-Info "A regra padrão do OpenSSH (qualquer rede) foi desativada; só endereços do Tailscale entram."
+  Say "5/5 · Só chaves e só a sua conta"
+  if (-not (Test-Path $conf)) {
+    # Fresh install: sshd writes its default config on first start; create it
+    # from the shipped default instead so we never start it unhardened.
+    Copy-Item "$env:WINDIR\System32\OpenSSH\sshd_config_default" $conf
+  }
+  if (-not (Test-Path $backup)) { Copy-Item $conf $backup }
+  $me = $env:USERNAME.ToLower()
+  $lines = Get-Content $conf | Where-Object { $_ -notmatch '^\s*#?\s*(PasswordAuthentication|PubkeyAuthentication|PermitEmptyPasswords|AllowUsers)\b' }
+  $new = @("# TwinFolders: só chaves, só a conta $me", "PasswordAuthentication no", "PubkeyAuthentication yes",
+           "PermitEmptyPasswords no", "AllowUsers $me") + $lines
+  Set-Content -Path $conf -Value $new -Encoding ascii
+  & "$env:WINDIR\System32\OpenSSH\sshd.exe" -t
+  if ($LASTEXITCODE -ne 0) { throw "a configuração do SSH ficou inválida" }
+
+  Set-Service sshd -StartupType Automatic
+  Start-Service sshd
+  Info "Servidor ligado só agora, já protegido: senha desligada, só \"$me\", só pelo Tailscale."
+} catch {
+  Stop-Service sshd -ErrorAction SilentlyContinue
+  Set-Service sshd -StartupType Manual -ErrorAction SilentlyContinue
+  if (Test-Path $backup) { Copy-Item $backup $conf -Force }
+  Die "$($_.Exception.Message). O servidor SSH foi deixado desligado e a configuração anterior restaurada."
+}
 
 Say "Pronto"
 Info "No outro computador, o TwinFolders abre um terminal aqui usando o usuário: $env:USERNAME"

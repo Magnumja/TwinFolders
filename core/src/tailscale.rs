@@ -25,6 +25,9 @@ pub struct TsPeer {
     pub os: String,
     pub ips: Vec<String>,
     pub online: bool,
+    /// Owner account (`UserID`); 0 when unknown.
+    #[serde(skip)]
+    pub user_id: i64,
 }
 
 impl TsPeer {
@@ -73,6 +76,7 @@ fn peer(v: &Value) -> Option<TsPeer> {
         os: s("OS"),
         ips,
         online: v.get("Online").and_then(Value::as_bool).unwrap_or(false),
+        user_id: v.get("UserID").and_then(Value::as_i64).unwrap_or(0),
     })
 }
 
@@ -90,16 +94,18 @@ pub fn parse_status(json: &str) -> Result<TsStatus, String> {
         .and_then(Value::as_object)
         .map(|m| m.values().filter_map(peer).collect())
         .unwrap_or_default();
+    let me = v.get("Self").and_then(peer);
+    // Only this account's own machines: nodes shared in from other users
+    // (or other tailnets) must never become an SSH target.
+    if let Some(owner) = me.as_ref().map(|m| m.user_id).filter(|id| *id != 0) {
+        peers.retain(|p| p.user_id == owner);
+    }
     peers.sort_by(|a, b| {
         b.online
             .cmp(&a.online)
             .then_with(|| a.host_name.cmp(&b.host_name))
     });
-    Ok(TsStatus {
-        state,
-        me: v.get("Self").and_then(peer),
-        peers,
-    })
+    Ok(TsStatus { state, me, peers })
 }
 
 /// The tailnet peer behind a Syncthing address such as
@@ -130,25 +136,11 @@ pub fn peer_for_address<'a>(peers: &'a [TsPeer], address: &str) -> Option<&'a Ts
     })
 }
 
-fn squash(s: &str) -> String {
-    s.chars()
-        .filter(|c| c.is_ascii_alphanumeric())
-        .map(|c| c.to_ascii_lowercase())
-        .collect()
-}
-
-/// The tailnet peer that is this Syncthing device: by any of its addresses
-/// (live connection first), else by name ("PC-ESCRITORIO" ~ "pc escritório").
-pub fn match_device<'a>(peers: &'a [TsPeer], name: &str, addresses: &[&str]) -> Option<&'a TsPeer> {
-    addresses
-        .iter()
-        .find_map(|a| peer_for_address(peers, a))
-        .or_else(|| {
-            let n = squash(name);
-            (!n.is_empty())
-                .then(|| peers.iter().find(|p| squash(&p.host_name) == n))
-                .flatten()
-        })
+/// The tailnet peer that is this Syncthing device, by its addresses only
+/// (live connection first, then the configured ones). Never by name: a
+/// look-alike name must not decide where an SSH session goes.
+pub fn match_device<'a>(peers: &'a [TsPeer], addresses: &[&str]) -> Option<&'a TsPeer> {
+    addresses.iter().find_map(|a| peer_for_address(peers, a))
 }
 
 /// Program + arguments that open a terminal running `ssh <target>`.
@@ -256,18 +248,22 @@ mod tests {
       "TailscaleIPs": ["100.101.12.4", "fd7a:115c:a1e0::1"],
       "Self": {
         "ID": "n1", "HostName": "MacBook-Pro", "DNSName": "macbook-pro.tail1234.ts.net.",
-        "OS": "macOS", "TailscaleIPs": ["100.101.12.4", "fd7a:115c:a1e0::1"], "Online": true
+        "OS": "macOS", "TailscaleIPs": ["100.101.12.4", "fd7a:115c:a1e0::1"], "Online": true, "UserID": 111
       },
       "CurrentTailnet": {"Name": "voce@example.com", "MagicDNSSuffix": "tail1234.ts.net", "MagicDNSEnabled": true},
       "Peer": {
         "nodekey:aaa": {
           "HostName": "PC-ESCRITORIO", "DNSName": "pc-escritorio.tail1234.ts.net.", "OS": "windows",
           "TailscaleIPs": ["100.92.8.12", "fd7a:115c:a1e0::2"], "Online": true,
-          "LastSeen": "0001-01-01T00:00:00Z", "UnknownFutureField": {"x": 1}
+          "LastSeen": "0001-01-01T00:00:00Z", "UnknownFutureField": {"x": 1}, "UserID": 111
         },
         "nodekey:bbb": {
           "HostName": "notebook-antigo", "DNSName": "", "OS": "linux",
-          "TailscaleIPs": ["100.70.1.9"], "Online": false, "LastSeen": "2026-11-01T10:00:00Z"
+          "TailscaleIPs": ["100.70.1.9"], "Online": false, "LastSeen": "2026-11-01T10:00:00Z", "UserID": 111
+        },
+        "nodekey:ddd": {
+          "HostName": "pc-escritorio", "DNSName": "pc-escritorio.other-tailnet.ts.net.", "OS": "windows",
+          "TailscaleIPs": ["100.99.9.9"], "Online": true, "UserID": 999
         },
         "nodekey:ccc": {"Tags": ["tag:server"]}
       }
@@ -325,24 +321,30 @@ mod tests {
     }
 
     #[test]
-    fn matches_devices_by_address_then_name() {
+    fn matches_devices_only_by_address_never_by_name() {
         let s = parse_status(RUNNING).unwrap();
-        let m =
-            |name, addrs: &[&str]| match_device(&s.peers, name, addrs).map(|p| p.host_name.clone());
+        let m = |addrs: &[&str]| match_device(&s.peers, addrs).map(|p| p.host_name.clone());
         assert_eq!(
-            m("Windows PC", &["tcp://100.92.8.12:22001"]).as_deref(),
+            m(&["tcp://100.92.8.12:22001"]).as_deref(),
             Some("PC-ESCRITORIO")
         );
         assert_eq!(
-            m("PC Escritorio", &["dynamic"]).as_deref(),
-            Some("PC-ESCRITORIO")
-        );
-        assert_eq!(
-            m("Notebook-Antigo", &[]).as_deref(),
+            m(&["dynamic", "tcp://100.70.1.9:22001"]).as_deref(),
             Some("notebook-antigo")
         );
-        assert_eq!(m("Outro", &["dynamic"]), None);
-        assert_eq!(m("", &[]), None);
+        // A similar name is not enough to pick an SSH host.
+        assert_eq!(m(&["dynamic"]), None);
+        assert_eq!(m(&[]), None);
+    }
+
+    #[test]
+    fn nodes_shared_from_other_accounts_are_ignored() {
+        let s = parse_status(RUNNING).unwrap();
+        assert!(s
+            .peers
+            .iter()
+            .all(|p| p.host_name != "pc-escritorio" || p.dns_name.contains("tail1234")));
+        assert_eq!(match_device(&s.peers, &["tcp://100.99.9.9:22001"]), None);
     }
 
     #[test]
