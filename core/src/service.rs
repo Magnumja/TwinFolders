@@ -568,7 +568,9 @@ pub fn install(cfg: &ServiceConfig) -> Result<String> {
     request_shutdown(cfg);
     platform_stop(os)?;
     let p = provision_home(cfg)?;
-    secrets::store_api_key(&p.gui.api_key).map_err(ServiceError::Secrets)?;
+    // The API key stays only in config.xml (0600), where the app and CLI
+    // read it. Mirroring it in the Keychain made macOS ask for permission
+    // whenever a different binary (the app, a new build) touched the item.
     if let Some(pw) = &p.new_gui_password {
         secrets::store_gui_password(pw).map_err(ServiceError::Secrets)?;
     }
@@ -583,7 +585,8 @@ pub fn uninstall(cfg: &ServiceConfig) -> Result<()> {
     request_shutdown(cfg);
     platform_stop(os)?;
     platform_unregister(os)?;
-    secrets::delete_api_key().map_err(ServiceError::Secrets)?;
+    // Older versions mirrored the key in the credential store: best effort.
+    let _ = secrets::delete_api_key();
     // Keep the GUI password: the home (and its bcrypt hash) is kept too.
     Ok(())
 }

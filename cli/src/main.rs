@@ -10,6 +10,7 @@ use std::path::PathBuf;
 use std::process::ExitCode;
 
 use twinfolders_core::service::{self, ServiceConfig};
+use twinfolders_core::setup;
 
 const USAGE: &str = "uso:
   twinfolders service install [--syncthing CAMINHO] [--gui-port N] [--listen-port N]
@@ -82,25 +83,9 @@ fn find_syncthing(explicit: Option<PathBuf>) -> Result<PathBuf, String> {
             Err(format!("Syncthing não encontrado em {}", p.display()))
         };
     }
-    let exe = if cfg!(windows) {
-        "syncthing.exe"
-    } else {
-        "syncthing"
-    };
-    let mut candidates: Vec<PathBuf> = std::env::var_os("PATH")
-        .map(|p| std::env::split_paths(&p).map(|d| d.join(exe)).collect())
-        .unwrap_or_default();
-    candidates.push("/opt/homebrew/bin/syncthing".into());
-    candidates.push("/usr/local/bin/syncthing".into());
-    if let Some(l) = std::env::var_os("LOCALAPPDATA") {
-        candidates.push(PathBuf::from(l).join("Microsoft\\WinGet\\Links\\syncthing.exe"));
-    }
-    candidates
-        .into_iter()
-        .find(|p| service::is_executable(p))
-        .ok_or_else(|| {
-            "Syncthing não encontrado. Instale com `brew install syncthing` (Mac) ou `winget install Syncthing.Syncthing` (Windows), ou use --syncthing CAMINHO.".into()
-        })
+    setup::find_syncthing().ok_or_else(|| {
+        "Syncthing não encontrado. Instale com `brew install syncthing` (Mac) ou `winget install Syncthing.Syncthing` (Windows), ou use --syncthing CAMINHO.".into()
+    })
 }
 
 fn run(cmd: Cmd) -> Result<(), String> {

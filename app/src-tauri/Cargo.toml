@@ -3,6 +3,7 @@ name = "twinfolders-app"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+publish = false
 description = "TwinFolders desktop app (tray + status panel)"
 
 [build-dependencies]

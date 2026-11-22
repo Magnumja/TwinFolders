@@ -16,6 +16,8 @@ use std::process::Command;
 use serde::Serialize;
 use serde_json::Value;
 
+use crate::setup;
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct TsPeer {
@@ -144,36 +146,10 @@ pub fn match_device<'a>(peers: &'a [TsPeer], addresses: &[&str]) -> Option<&'a T
 }
 
 /// Program + arguments that open a terminal running `ssh <target>`.
-/// `target` must come from [`ssh_target`], whose character set makes it
-/// safe inside an AppleScript string and a `cmd /C start` command line.
-pub fn terminal_command(target: &str) -> (String, Vec<String>) {
-    if cfg!(target_os = "macos") {
-        (
-            "osascript".into(),
-            vec![
-                "-e".into(),
-                "tell application \"Terminal\" to activate".into(),
-                "-e".into(),
-                format!("tell application \"Terminal\" to do script \"ssh {target}\""),
-            ],
-        )
-    } else if cfg!(windows) {
-        (
-            "cmd".into(),
-            vec![
-                "/C".into(),
-                "start".into(),
-                "TwinFolders SSH".into(),
-                "ssh".into(),
-                target.into(),
-            ],
-        )
-    } else {
-        (
-            "x-terminal-emulator".into(),
-            vec!["-e".into(), "ssh".into(), target.into()],
-        )
-    }
+/// `target` must come from [`ssh_target`]; [`setup::terminal_command`]
+/// re-checks every word before it reaches AppleScript or `cmd`.
+pub fn terminal_command(target: &str) -> Result<(String, Vec<String>), String> {
+    setup::terminal_command(&["ssh", target])
 }
 
 /// Host names/IPs safe to put in a terminal command line.
@@ -349,7 +325,7 @@ mod tests {
 
     #[test]
     fn terminal_command_runs_ssh_with_the_target_only() {
-        let (prog, args) = terminal_command("magnum@pc-escritorio.tail1234.ts.net");
+        let (prog, args) = terminal_command("magnum@pc-escritorio.tail1234.ts.net").unwrap();
         assert!(!prog.is_empty());
         let joined = args.join(" ");
         assert!(

@@ -87,6 +87,15 @@ Valores de referência: tarefa `\TwinFolders\Syncthing` (gatilho: logon do usuá
 - ☐ No app, Computadores → Acesso remoto mostra "Pronto em …" e "Abrir terminal" abre o terminal já conectado.
 - ☐ Desfazer (`--undo` / `-Undo`) volta ao estado anterior.
 
+## Instalador e primeira abertura (Fatia 7) — NÃO VERIFICADO
+
+- ☐ Baixar o `.msi` (ou `-setup.exe`) do rascunho de release; `Get-FileHash` bate com `SHA256SUMS-Windows.txt`.
+- ☐ Instalar; o SmartScreen pede "Executar assim mesmo" (sem certificado).
+- ☐ Num Windows sem Syncthing: a tela "Vamos preparar este computador" aparece; "Instalar com o winget" abre o Prompt com `winget install --id Syncthing.Syncthing`; ao terminar, o passo 2 libera sozinho (até ~4 s).
+- ☐ "Ligar agora": em poucos segundos aparece o painel normal; `Get-ScheduledTask -TaskPath "\TwinFolders\"` mostra a tarefa; o Firewall pergunta sobre o syncthing.exe (só Redes privadas).
+- ☐ Sair do app e reiniciar o PC: a sincronização volta sozinha.
+- ☐ Desinstalar pelos comandos do README: serviço some, pastas ficam.
+
 ## 7. Resultados
 
 | Passo | Resultado | Observações |

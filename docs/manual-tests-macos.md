@@ -91,6 +91,15 @@ Valores de referência: label `dev.twinfolders.syncthing`; plist `~/Library/Laun
 - ☐ No app, Computadores → Acesso remoto mostra "Pronto em …" e "Abrir terminal" abre o terminal já conectado.
 - ☐ Desfazer (`--undo` / `-Undo`) volta ao estado anterior.
 
+## Instalador e primeira abertura (Fatia 7) — NÃO VERIFICADO
+
+- ☐ Baixar o `.dmg` do rascunho de release; `shasum -a 256` bate com `SHA256SUMS-macOS.txt`.
+- ☐ Arrastar para Aplicativos; botão direito → Abrir funciona (sem certificado) ou abre direto (assinado e notarizado).
+- ☐ Num Mac sem Syncthing: a tela "Vamos preparar este computador" aparece; "Instalar com o Homebrew" abre o Terminal com `brew install syncthing`; ao terminar, o passo 2 libera sozinho (até ~4 s).
+- ☐ "Ligar agora": em poucos segundos aparece o painel normal; `launchctl print gui/$(id -u)/dev.twinfolders.syncthing` mostra o serviço; nenhum prompt do Keychain.
+- ☐ Sair do app e reiniciar o Mac: a sincronização volta sozinha.
+- ☐ Desinstalar pelos comandos do README: serviço some, pastas ficam.
+
 ## 7. Resultados
 
 | Passo | Resultado | Observações |

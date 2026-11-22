@@ -11,6 +11,7 @@ pub mod preflight;
 pub mod resolve;
 pub mod secrets;
 pub mod service;
+pub mod setup;
 pub mod stconfig;
 pub mod stignore;
 pub mod tailscale;

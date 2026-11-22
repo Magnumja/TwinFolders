@@ -17,11 +17,27 @@ O TwinFolders **não reinventa a sincronização**. Ele orquestra ferramentas ma
 | [Syncthing](https://syncthing.net) | Sincronização P2P, retomada automática quando os dois voltam a ficar online, versionamento e conflitos |
 | [Tailscale](https://tailscale.com) | Rede privada entre as máquinas, em qualquer rede, **sem abrir portas no roteador** |
 | OpenSSH | Terminal remoto entre as máquinas, só por chave |
-| Tauri (em breve) | App na barra de menus / bandeja com painel de status |
+| Tauri | App na barra de menus / bandeja com painel de status |
 
 ## Instalação (primeira vez)
 
-> Ainda **não há instalador pronto** (ele é a Fatia 7). Por enquanto você compila no próprio computador; leva uns 10 minutos na primeira vez e só precisa ser feito uma vez em cada máquina. Faça os passos **nos dois computadores** (no Mac e no Windows) e depois siga [Como usar](#como-usar).
+Faça nos **dois computadores** (no Mac e no Windows) e depois siga [Como usar](#como-usar).
+
+### Jeito fácil: instalador
+
+1. Baixe o instalador na página [Releases](https://github.com/Magnumja/TwinFolders/releases): `.dmg` no Mac, `.msi` ou `-setup.exe` no Windows. (Se ainda não houver versão publicada, use o jeito “compilar” abaixo.)
+2. **Mac:** abra o `.dmg` e arraste o TwinFolders para **Aplicativos**. Enquanto o app não for assinado pela Apple, na primeira vez clique nele com o **botão direito → Abrir → Abrir**.
+   **Windows:** execute o instalador. Se o SmartScreen avisar, clique em **Mais informações → Executar assim mesmo**.
+3. Abra o TwinFolders. A tela **“Vamos preparar este computador”** faz o resto em dois cliques:
+   - **Instalar com o Homebrew / winget:** abre uma janela de terminal instalando o Syncthing (o motor da sincronização). No Mac é preciso ter o [Homebrew](https://brew.sh); no Windows o winget já vem no sistema.
+   - **Ligar agora:** liga a sincronização em segundo plano, que passa a iniciar sozinha quando você entra no computador. Não pede senha de administrador.
+   - No Windows, se o **Firewall** perguntar sobre o `syncthing.exe`, marque **apenas Redes privadas** e permita.
+
+![Primeira abertura](docs/screenshot-setup.jpg)
+
+### Jeito “compilar” (para desenvolvedores)
+
+Leva uns 10 minutos na primeira vez.
 
 ### No Mac
 
@@ -46,12 +62,7 @@ O TwinFolders **não reinventa a sincronização**. Ele orquestra ferramentas ma
    ```bash
    cargo build --release -p twinfolders-cli && npm --prefix app ci && npm --prefix app run tauri build -- --bundles app
    ```
-6. **Ligue o serviço em segundo plano** (é ele que sincroniza, mesmo com o app fechado):
-   ```bash
-   ./target/release/twinfolders service install
-   ```
-   O macOS pode pedir para permitir o acesso às Chaves (Keychain): clique em **Permitir sempre**. É onde fica a senha que protege o painel local.
-7. **Abra o app:** copie `target/release/bundle/macos/TwinFolders.app` para a pasta **Aplicativos** e abra. Como o app ainda não é assinado, na primeira vez o macOS bloqueia: vá em **Ajustes do Sistema → Privacidade e Segurança** e clique em **Abrir mesmo assim**.
+6. **Abra o app:** copie `target/release/bundle/macos/TwinFolders.app` para a pasta **Aplicativos** e abra (na primeira vez: botão direito → **Abrir**). A tela de primeira abertura liga o serviço em segundo plano. Pelo terminal também dá: `./target/release/twinfolders service install`.
 
 ### No Windows
 
@@ -71,12 +82,7 @@ O TwinFolders **não reinventa a sincronização**. Ele orquestra ferramentas ma
    ```powershell
    cargo build --release -p twinfolders-cli; npm --prefix app ci; npm --prefix app run tauri build
    ```
-4. **Ligue o serviço em segundo plano** (aponte para o Syncthing instalado pelo winget):
-   ```powershell
-   $BIN = (Get-Command syncthing.exe -ErrorAction SilentlyContinue).Source; if (-not $BIN) { $BIN = Get-ChildItem "$env:LOCALAPPDATA\Microsoft\WinGet\Packages" -Recurse -Filter syncthing.exe | Select-Object -First 1 -ExpandProperty FullName }; .\target\release\twinfolders.exe service install --syncthing $BIN
-   ```
-   Se o **Firewall do Windows** perguntar sobre o `syncthing.exe`, marque **apenas Redes privadas** e permita.
-5. **Abra o app:** o instalador fica em `target\release\bundle\` (pasta `msi` ou `nsis`). Execute-o; o Windows SmartScreen pode avisar que o app não é reconhecido: clique em **Mais informações → Executar assim mesmo**.
+4. **Instale e abra o app:** o instalador fica em `target\release\bundle\` (pasta `msi` ou `nsis`). Execute-o (SmartScreen: **Mais informações → Executar assim mesmo**). A tela de primeira abertura liga o serviço em segundo plano. Se o **Firewall do Windows** perguntar sobre o `syncthing.exe`, marque **apenas Redes privadas** e permita.
 
 > ⚠️ **Windows ainda não foi testado numa máquina real.** O serviço em segundo plano foi verificado no Windows Server pelo CI, mas a interface e o pareamento no Windows estão marcados como não verificados em [docs/manual-tests-windows.md](docs/manual-tests-windows.md). Se algo falhar, abra uma issue com a mensagem de erro.
 
@@ -86,10 +92,19 @@ Na mesma casa ou escritório, os dois se encontram sozinhos. Em redes diferentes
 
 ### Desinstalar
 
-```bash
-./target/release/twinfolders service uninstall
-```
-No Windows: `.\target\release\twinfolders.exe service uninstall`. Suas pastas e arquivos **não** são apagados.
+Primeiro desligue o serviço em segundo plano; suas pastas e arquivos **não** são apagados.
+
+- **Mac** (Terminal):
+  ```bash
+  launchctl bootout gui/$(id -u)/dev.twinfolders.syncthing; rm -f ~/Library/LaunchAgents/dev.twinfolders.syncthing.plist
+  ```
+  Depois arraste o TwinFolders de Aplicativos para o Lixo.
+- **Windows** (PowerShell):
+  ```powershell
+  Unregister-ScheduledTask -TaskPath '\TwinFolders\' -TaskName Syncthing -Confirm:$false
+  ```
+  Depois remova o TwinFolders em **Configurações → Aplicativos**.
+- Quem compilou também pode usar `twinfolders service uninstall`.
 
 ## Como usar
 
@@ -132,7 +147,7 @@ Para abrir um terminal no outro computador de qualquer lugar, os dois precisam d
 - **Versionamento por pasta** (escalonado, últimas N versões, lixeira ou desligado) configurável na tela.
 - **Validador de nomes** que o Windows não aceita (`: * ? " < > |`, `CON`, `NUL`, ponto/espaço no fim) e de colisões de maiúsculas/minúsculas.
 - **Serviço em segundo plano** que sobe no login, sem abrir app: LaunchAgent no Mac, Tarefa Agendada no Windows (`twinfolders service install|status|uninstall`).
-- **Configuração endurecida:** API e painel só em `127.0.0.1`, painel com senha aleatória, API key no Keychain / Credential Manager (nunca em linha de comando ou arquivos de serviço), **NAT-PMP/UPnP, relays e descoberta global desligados**.
+- **Configuração endurecida:** API e painel só em `127.0.0.1`, painel com senha aleatória, API key só no `config.xml` do Syncthing, legível apenas pela sua conta (nunca em linha de comando ou arquivos de serviço), **NAT-PMP/UPnP, relays e descoberta global desligados**.
 
 Critérios verificados com dois daemons Syncthing reais (ver `core/tests/`): arquivo criado num lado aparece no outro em ~2 s; edição feita com o outro offline chega ~2 s após reconectar; edição dos dois lados offline gera conflito visível sem perda de dados.
 
@@ -143,6 +158,7 @@ Critérios verificados com dois daemons Syncthing reais (ver `core/tests/`): arq
 - **Conflitos geram cópias, não mesclagem.** Editar o mesmo arquivo nos dois lados ao mesmo tempo gera duas versões para você escolher.
 - **Permissões Unix, symlinks e atributos estendidos** não são preservados de forma garantida entre NTFS e APFS.
 - **SSH no Windows tem menos recursos que no Mac**, e o servidor SSH do próprio Tailscale não existe no Windows — por isso usamos OpenSSH nos dois lados.
+- **Instaladores ainda sem assinatura** da Apple e da Microsoft: o sistema avisa na primeira abertura (veja [docs/release.md](docs/release.md)).
 - **Windows ainda não foi verificado em máquina real** — só por CI e roteiros manuais ([docs/manual-tests-windows.md](docs/manual-tests-windows.md)).
 
 ## Desenvolvimento
@@ -154,11 +170,13 @@ cargo test --workspace      # inclui testes com dois daemons Syncthing reais
 cargo run -p twinfolders-cli -- service status
 ```
 
+Publicar uma versão: [docs/release.md](docs/release.md). Dependências checadas no CI com `cargo deny check` ([deny.toml](deny.toml)) e `npm audit`.
+
 Documentos: [SPEC.md](SPEC.md) (requisitos e critérios de aceite) · [docs/TASKS.md](docs/TASKS.md) (fatias e pendências) · [docs/research.md](docs/research.md) (APIs verificadas nas docs oficiais).
 
 ## Roadmap
 
-SSH com um clique via Tailscale · instalador em um clique, assinado · terceiro nó sempre ligado · Wake-on-LAN · perfis por pasta · histórico e velocidade · sincronização seletiva e limite de banda.
+Assinatura dos instaladores (Apple/Microsoft) · terceiro nó sempre ligado · Wake-on-LAN · perfis por pasta · histórico e velocidade · sincronização seletiva e limite de banda.
 
 ## Licença
 

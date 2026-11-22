@@ -60,10 +60,11 @@ Legenda: 🤖 roda em agente paralelo · 🔎 verificar docs oficiais antes · �
 ## Fatia 7 — Instalador, README e publicação
 | # | Tarefa | Evidência |
 |---|---|---|
-| 7.1 | Onboarding guiado (brew/winget, passos de elevação) | screenshots |
-| 7.2 | README honesto + `docs/manual-tests-{mac,windows}.md` com ☐ NÃO VERIFICADO | revisão |
-| 7.3 | 🤖 Revisão de segurança + sanitização para repo público | relatório PASS |
-| 7.4 | `gh repo create TwinFolders --public` + push (**só com seu OK**) | URL do repo |
+| ✅ 7.1 | Primeira abertura guiada no app (`core/src/setup.rs` + `Setup.tsx`): acha o Syncthing (PATH, Homebrew, winget); se faltar, abre um terminal visível com `brew install syncthing` / `winget install --id Syncthing.Syncthing` (palavras fixas, checadas antes de chegar ao AppleScript/`cmd`); "Ligar agora" instala o serviço por usuário, sem admin; mostra o estado do Tailscale. Chave da API deixou de ser espelhada no Keychain (era a causa dos prompts) | 3 testes de componente + 3 unit; `docs/screenshot-setup.jpg` (dados simulados). Rodar de verdade num computador sem Syncthing 🖐 |
+| ✅ 7.1b | Instaladores: `.github/workflows/release.yml` (tag `v*` → `.dmg` universal + `.msi`/`-setup.exe`, SHA256SUMS, release em rascunho). Assinatura/notarização Apple ligadas só se os secrets existirem (`docs/release.md`); sem eles, ad-hoc + hardened runtime | build local: `TwinFolders_0.1.0_aarch64.dmg`, `codesign`: `flags=0x10002(adhoc,runtime)`. Workflow ainda não rodou (roda na primeira tag) 🖐. Certificados Apple/Windows: dependem de conta paga |
+| ✅ 7.2 | README: instalador + primeira abertura, compilar, desinstalar sem CLI, limitações (sem assinatura); roteiros manuais com a Fatia 7 como NÃO VERIFICADO | revisão |
+| ✅ 7.3 | `cargo deny` (vulnerabilidades, licenças, fontes; `deny.toml`) e `npm audit` no CI; revisão de segurança final + sanitização (`docs/security-review.md`) | `cargo deny check`: advisories/bans/licenses/sources ok; `npm audit`: 0; varredura de segredos/dados pessoais no histórico: nada |
+| ✅ 7.4 | Repositório público em github.com/Magnumja/TwinFolders | URL |
 
 ## Paralelismo previsto
 - 0.2 e 1.2/1.3/1.4 em agentes paralelos (lógica pura, independentes).
@@ -77,7 +78,7 @@ Legenda: 🤖 roda em agente paralelo · 🔎 verificar docs oficiais antes · �
 | Código #5 | Distinguir `Timeout` de `Connect` em escritas (resultado indeterminado) → `Error::Timeout` | ✅ 4.3 |
 | Código #7 | `(?i)` nos padrões: **não é preciso** — o Syncthing aplica `(?i)` sozinho em sistemas de arquivos que ignoram maiúsculas (Mac/Windows), visto na API real | ✅ 4.3 |
 | Segurança #1 | Executor de conflitos: rename sem sobrescrever (`RENAME_NOREPLACE`/`MoveFileEx` sem replace), não seguir symlinks, KeepBoth com nome único. Risco residual documentado: processo local trocando pasta por symlink entre a checagem e o rename | ✅ 5.2 |
-| Segurança #5 | Em produção passar a API key por `STGUIAPIKEY`/config.xml (0600), nunca por argv; config.xml guarda a key em texto puro | 3.3 |
+| Segurança #5 | Em produção passar a API key por `STGUIAPIKEY`/config.xml (0600), nunca por argv; config.xml guarda a key em texto puro | ✅ 3.3 (CI confere que não está na linha de comando) |
 | Código #9/#10 | Robustez dos testes: portas (TOCTOU) e `wait_idle` logo após `scan` | contínuo |
 | Revisão segurança Fatia 5 — M1 | "Nunca apaga" podia falhar: o rename mantém o mtime antigo e a limpeza da lixeira/"últimas N" do Syncthing apagaria a cópia arquivada cedo → mtime da cópia arquivada passa a ser "agora" (teste) | ✅ |
 | Revisão segurança Fatia 5 — M2 | Falha ao desfazer passos era silenciosa → erro `RollbackFailed` lista onde cada arquivo ficou (sem teste automatizado: difícil injetar a falha) | ✅ |
@@ -93,8 +94,8 @@ Legenda: 🤖 roda em agente paralelo · 🔎 verificar docs oficiais antes · �
 | CI instável (2026-11-21) | Windows: Syncthing levou >30 s para subir a API no runner (timeout do teste de pareamento) → espera de 90 s e o fim do log no erro. macOS: testes de `guitls` colidiam no nome da pasta temporária (relógio em µs + testes paralelos) → PID + contador | ✅ |
 | Revisão de segurança (Fatia 6) | (1) Host do SSH podia ser escolhido por nome parecido, inclusive de nó compartilhado de outra conta → só pelo endereço real da conexão e só nós da sua conta (`UserID`). (2) Windows ligava o sshd antes de endurecer → firewall e config primeiro, sshd por último, `try/catch` desliga e restaura se falhar; `-Undo` deixa desligado. (3) Windows sem restrição de conta → `AllowUsers` só com o seu usuário | ✅ |
 | Fatia 5 (achado) | Harness de teste matava só o monitor do Syncthing e deixava o worker órfão → agora desliga via REST antes (`Node::stop`) | ✅ |
-| Segurança #4 | `cargo deny`/`cargo audit` no CI | 7.3 |
-| Fatia 3 (teste real) | Item do Keychain é atrelado ao binário que o criou: builds não assinados/atualizados fazem o macOS pedir permissão de novo → assinar/notarizar o app | 7.1 |
+| Segurança #4 | `cargo deny`/`cargo audit` no CI | ✅ 7.3 |
+| Fatia 3 (teste real) | Item do Keychain é atrelado ao binário que o criou: builds não assinados/atualizados fazem o macOS pedir permissão de novo → a chave da API saiu do Keychain (só `config.xml` 0600); assinatura Apple pronta no workflow, falta o certificado | ✅ 7.1 |
 | Fatia 3 (teste real) | Matar o monitor do Syncthing com kill -9 também encerra o worker e o launchd relança tudo (verificado); no Windows `Stop-ScheduledTask` pode deixar o worker vivo → uninstall já faz shutdown via REST antes | 🖐 Windows |
 | Segurança (Fatia 3) | Painel web sem senha → corrigido: usuário `twinfolders` + senha aleatória (bcrypt via `syncthing generate --gui-password=-`, senha no cofre do SO) | ✅ |
 | Segurança (Fatia 3) | Port squatting / TOCTOU na 8385 → **resolvido**: GUI em HTTPS com CA privada fixada (chave da CA descartada; chave do servidor 0600). Cliente não pinado ou com outra CA é recusado (teste) | ✅ |

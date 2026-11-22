@@ -24,7 +24,7 @@ use twinfolders_core::preflight;
 use twinfolders_core::resolve::{self, ConflictEntry, Outcome};
 use twinfolders_core::service::{self, ServiceConfig};
 use twinfolders_core::versioning::Choice;
-use twinfolders_core::{stconfig, tailscale};
+use twinfolders_core::{setup, stconfig, tailscale};
 
 /// Events that change what the panel shows.
 const WATCHED_EVENTS: &[&str] = &[
@@ -169,7 +169,7 @@ fn connect() -> Result<SyncthingClient, Snapshot> {
     let (home, _dev) = home().map_err(not_installed)?;
     let xml = std::fs::read_to_string(home.join("config.xml")).map_err(|_| {
         not_installed(format!(
-            "O serviço em segundo plano não está instalado ({} não existe). Rode `twinfolders service install`.",
+            "O serviço em segundo plano ainda não foi ligado neste computador ({} não existe).",
             home.display()
         ))
     })?;
@@ -295,6 +295,89 @@ fn get_profile(app: AppHandle) -> Profile {
         os: std::env::consts::OS,
         version: app.package_info().version.to_string(),
     }
+}
+
+/* ---------- first-run setup ---------- */
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct Setup {
+    os: &'static str,
+    /// Where Syncthing was found, if anywhere.
+    syncthing: Option<String>,
+    /// Package manager that can install it (`brew` / `winget`), if present.
+    package_manager: Option<setup::PackageManager>,
+    /// The install command, shown so the person can also run it themself.
+    install_command: Option<String>,
+    /// `None` when Tailscale is running; otherwise what to do, in pt-BR.
+    tailscale_problem: Option<String>,
+}
+
+#[tauri::command]
+async fn get_setup() -> Result<Setup, String> {
+    tauri::async_runtime::spawn_blocking(|| {
+        let pm = setup::package_manager();
+        Setup {
+            os: std::env::consts::OS,
+            syncthing: setup::find_syncthing().map(|p| p.display().to_string()),
+            package_manager: pm.as_ref().map(|(k, _)| *k),
+            install_command: pm
+                .as_ref()
+                .map(|(k, bin)| setup::syncthing_install_words(*k, bin).join(" ")),
+            tailscale_problem: match tailscale::status() {
+                Ok(s) if s.running() => None,
+                Ok(_) => Some("o Tailscale está instalado, mas não está conectado.".into()),
+                Err(e) => Some(e),
+            },
+        }
+    })
+    .await
+    .map_err(|e| e.to_string())
+}
+
+/// Opens a terminal running the package manager's "install Syncthing"
+/// command, so the person sees the progress and any password prompt.
+/// The command is built here from fixed words, never taken from the UI.
+#[tauri::command]
+async fn install_syncthing() -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(|| {
+        let (pm, bin) = setup::package_manager().ok_or(
+            "nenhum instalador de programas encontrado (Homebrew no Mac, winget no Windows)",
+        )?;
+        let words = setup::syncthing_install_words(pm, &bin);
+        let refs: Vec<&str> = words.iter().map(String::as_str).collect();
+        let (prog, args) = setup::terminal_command(&refs)?;
+        let mut child = std::process::Command::new(prog)
+            .args(args)
+            .spawn()
+            .map_err(|e| format!("não foi possível abrir o terminal: {e}"))?;
+        std::thread::spawn(move || {
+            let _ = child.wait();
+        });
+        Ok(())
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+/// Installs and starts the background service (same as
+/// `twinfolders service install`): per-user, no administrator rights.
+/// Returns this computer's device ID.
+#[tauri::command]
+async fn install_service(state: State<'_, Arc<AppState>>) -> Result<String, String> {
+    let st = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let bin = setup::find_syncthing()
+            .ok_or("o Syncthing ainda não está instalado neste computador")?;
+        let cfg = ServiceConfig::for_current_user(bin).map_err(|e| e.to_string())?;
+        let id = service::install(&cfg).map_err(|e| e.to_string())?;
+        // Next snapshot connects to the new instance.
+        *lock(&st.client) = None;
+        *lock(&st.last) = None;
+        Ok(id)
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 /* ---------- remote access (SSH over Tailscale) ---------- */
@@ -434,7 +517,7 @@ async fn open_terminal(
             )
         })?;
         let target = tailscale::ssh_target(&m.user, &host)?;
-        let (prog, args) = tailscale::terminal_command(&target);
+        let (prog, args) = tailscale::terminal_command(&target)?;
         let mut child = std::process::Command::new(prog)
             .args(args)
             .spawn()
@@ -608,9 +691,13 @@ async fn reveal_folder(state: State<'_, Arc<AppState>>, folder_id: String) -> Re
         } else {
             "xdg-open"
         };
+        // On macOS `open` LAUNCHES a folder named like a bundle (`X.app`);
+        // for any folder with an extension, only reveal it in Finder.
+        let reveal_only = cfg!(target_os = "macos") && root.extension().is_some();
         // The path is a single argument (no shell), so spaces and quotes
         // in folder names are passed through untouched.
         let mut child = std::process::Command::new(opener)
+            .args(reveal_only.then_some("-R"))
             .arg(&root)
             .spawn()
             .map_err(|e| format!("não foi possível abrir a pasta: {e}"))?;
@@ -833,6 +920,9 @@ fn main() {
         .invoke_handler(tauri::generate_handler![
             get_overview,
             get_profile,
+            get_setup,
+            install_syncthing,
+            install_service,
             get_remote_access,
             set_ssh_user,
             open_terminal,

@@ -79,6 +79,15 @@ export interface Ignores {
   error: string | null;
 }
 
+/** main.rs Setup (first run). */
+export interface SetupInfo {
+  os: string;
+  syncthing: string | null;
+  packageManager: "brew" | "winget" | null;
+  installCommand: string | null;
+  tailscaleProblem: string | null;
+}
+
 export type Snapshot =
   | { status: "ok"; overview: Overview }
   | { status: "notInstalled"; message: string }

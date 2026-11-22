@@ -1,10 +1,11 @@
-//! Syncthing API key in the OS credential store (macOS Keychain / Windows
-//! Credential Manager), service `twinfolders`, account `syncthing-api-key`.
+//! OS credential store (macOS Keychain / Windows Credential Manager),
+//! service `twinfolders`.
 //!
-//! The key also lives in Syncthing's own `config.xml` (mode 0600, written by
-//! Syncthing). TwinFolders reads it from there once and keeps it in the OS
-//! store, so the app's own settings never contain secrets and the key never
-//! appears in a plist, task XML or process command line.
+//! Holds the random password of the Syncthing web GUI (account
+//! `syncthing-gui-password`), so the person can open that page if needed.
+//! The REST API key lives only in Syncthing's `config.xml` (mode 0600) and
+//! never in a plist, task XML or command line; the `*_api_key` helpers
+//! remain to clean up the mirror older versions kept here.
 
 use std::path::Path;
 

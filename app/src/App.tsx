@@ -13,6 +13,7 @@ import { VersioningEditor } from "./components/VersioningEditor";
 import { Preferences, Sidebar, Topbar, VIEW_KEYS } from "./components/Shell";
 import { ComputersView, FoldersView, OverviewView, PendingView, type Actions } from "./components/Views";
 import { HelpView } from "./components/Guide";
+import { SetupView } from "./components/Setup";
 import { ToastProvider, useToast } from "./components/Toasts";
 
 const POLL_MS = 3000;
@@ -167,7 +168,7 @@ function AppShell() {
               transition={{ duration: motionTokens.duration.fast, ease: motionTokens.easing.smooth }}
             >
               {state === "loading" && view !== "help" && <Skeleton />}
-              {snap?.status === "notInstalled" && view !== "help" && <Problem title="O serviço em segundo plano não está instalado." message={snap.message} />}
+              {snap?.status === "notInstalled" && view !== "help" && <SetupView onReady={refreshAll} />}
               {snap?.status === "notRunning" && view !== "help" && (
                 <Problem
                   title="O Syncthing local não está respondendo."

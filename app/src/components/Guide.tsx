@@ -133,9 +133,9 @@ export function AddDeviceForm({ onDone }: { onDone: () => void }) {
   );
 }
 
-type StepState = "done" | "current" | "next";
+export type StepState = "done" | "current" | "next";
 
-function Step({ n, state, title, children }: { n: number; state: StepState; title: string; children?: ReactNode }) {
+export function Step({ n, state, title, children }: { n: number; state: StepState; title: string; children?: ReactNode }) {
   return (
     <li className={`step step-${state}`} aria-current={state === "current" ? "step" : undefined}>
       <span className="step-mark" aria-hidden="true">{state === "done" ? "✓" : n}</span>
