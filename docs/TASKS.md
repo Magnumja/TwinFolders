@@ -53,7 +53,7 @@ Legenda: 🤖 roda em agente paralelo · 🔎 verificar docs oficiais antes · �
 ## Fatia 6 — SSH via Tailscale
 | # | Tarefa | Evidência |
 |---|---|---|
-| ✅ 6.1 | 🔎 `tailscale status --json` → peers MagicDNS (`core/src/tailscale.rs`, leitura defensiva; casa o computador pareado pelo endereço ou nome) | 7 testes com fixture no formato do `ipnstate` |
+| ✅ 6.1 | 🔎 `tailscale status --json` → peers MagicDNS (`core/src/tailscale.rs`, leitura defensiva; casa o computador pareado só pelo endereço real, só nós da sua conta) | 8 testes com fixture no formato do `ipnstate` |
 | ✅ 6.2 | Scripts `scripts/ssh-setup-mac.sh` e `scripts/ssh-setup-windows.ps1`: ed25519, autorizar a chave do outro, senha desativada (validado com `sshd -t`, desfeito se inválido), ACL de `administrators_authorized_keys`, firewall só Tailscale no Windows, `--undo` | Mac: testado em dry-run (chave, idempotência, rejeita chave inválida, permissões 700/600); Windows: sintaxe no CI. Execução real 🖐 |
 | ✅ 6.3 | "Abrir terminal na outra máquina" (Computadores → Acesso remoto): host vem do Tailscale e usuário validado no backend, nunca da tela; Terminal.app via AppleScript / `cmd start ssh` no Windows | AppleScript compilado; sem Tailscale aqui, o app mostra o aviso certo. Abrir de verdade 🖐 (precisa de Tailscale nos dois) |
 
