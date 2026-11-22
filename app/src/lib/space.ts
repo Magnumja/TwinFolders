@@ -1,4 +1,5 @@
-import type { FolderView, Overview } from "../types";
+import type { FolderView, Overview, Role } from "../types";
+import { others } from "./team";
 
 export interface Hero {
   title: string;
@@ -8,7 +9,8 @@ export interface Hero {
 const NUM = ["", "Um", "Dois", "Três", "Quatro", "Cinco"];
 
 /** Headline for the overview, from the real state of the space. */
-export function hero(o: Overview, conflicts: number): Hero {
+export function hero(o: Overview, conflicts: number, role: Role = "personal"): Hero {
+  const other = others(o.devices.length, role);
   if (o.devices.length === 0) {
     return {
       title: "Vamos conectar seus computadores.",
@@ -22,24 +24,24 @@ export function hero(o: Overview, conflicts: number): Hero {
     const n = conflicts <= 5 ? NUM[conflicts] : String(conflicts);
     return {
       title: conflicts === 1 ? "Um arquivo precisa de você." : `${n} arquivos precisam de você.`,
-      sub: "Foram alterados nos dois computadores. Nada foi perdido: escolha o que manter.",
+      sub: "Foram alterados em mais de um computador. Nada foi perdido: escolha o que manter.",
     };
   }
   if (!o.devices.some((d) => d.connected || d.lastSeen)) {
     return {
-      title: "Falta aprovar no outro computador.",
+      title: o.devices.length > 1 ? "Falta aprovar nos outros computadores." : "Falta aprovar no outro computador.",
       sub: "Abra o TwinFolders lá e aprove o pedido em Pendências. Esta tela muda sozinha quando eles se conectarem.",
     };
   }
   if (!o.devices.some((d) => d.connected && !d.paused)) {
     return {
-      title: "Seu espaço espera o outro computador.",
-      sub: "Assim que os dois estiverem ligados, tudo sincroniza sozinho.",
+      title: `Seu espaço espera ${other}.`,
+      sub: o.devices.length > 1 ? "Assim que eles estiverem ligados, tudo sincroniza sozinho." : "Assim que os dois estiverem ligados, tudo sincroniza sozinho.",
     };
   }
   return {
-    title: "Seu espaço, em sintonia.",
-    sub: "Acompanhe o que conecta seus computadores.",
+    title: role === "hub" ? "O escritório, em sintonia." : "Seu espaço, em sintonia.",
+    sub: role === "hub" ? "Acompanhe as pastas e os computadores do time." : "Acompanhe o que conecta seus computadores.",
   };
 }
 

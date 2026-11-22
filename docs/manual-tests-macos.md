@@ -100,6 +100,14 @@ Valores de referência: label `dev.twinfolders.syncthing`; plist `~/Library/Laun
 - ☐ Sair do app e reiniciar o Mac: a sincronização volta sozinha.
 - ☐ Desinstalar pelos comandos do README: serviço some, pastas ficam.
 
+## Vários computadores (Fatia 8) — NÃO VERIFICADO
+
+- ☐ Com 3 ou mais computadores: em Preferências, o papel muda os textos (Central: "Computadores do time").
+- ☐ Adicionar pasta marcando 2 computadores: os dois recebem o pedido; a linha da pasta mostra "Com A e B".
+- ☐ Compartilhar com…: tirar um computador mostra o aviso; ele para de receber mudanças e mantém os arquivos.
+- ☐ Desconectar um computador: some da lista e das pastas; os arquivos dele continuam lá.
+- ☐ Tailscale com um PC marcado com `tag:escritorio`: o Acesso remoto o reconhece.
+
 ## 7. Resultados
 
 | Passo | Resultado | Observações |

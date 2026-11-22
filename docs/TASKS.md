@@ -66,6 +66,18 @@ Legenda: 🤖 roda em agente paralelo · 🔎 verificar docs oficiais antes · �
 | ✅ 7.3 | `cargo deny` (vulnerabilidades, licenças, fontes; `deny.toml`) e `npm audit` no CI; revisão de segurança final + sanitização (`docs/security-review.md`) | `cargo deny check`: advisories/bans/licenses/sources ok; `npm audit`: 0; varredura de segredos/dados pessoais no histórico: nada |
 | ✅ 7.4 | Repositório público em github.com/Magnumja/TwinFolders | URL |
 
+## Fatia 8 — Vários computadores e papéis (escritório)
+Cenário: uma central (Mac da administradora) e vários PCs Windows do time; o uso pessoal (2 computadores) continua igual.
+
+| # | Tarefa | Evidência |
+|---|---|---|
+| ✅ 8.1 | Compartilhar uma pasta com vários computadores (`ShareRequest.peer_ids`), mudar com quem ela é compartilhada (`pairing::set_folder_peers`: mantém as configurações de quem fica; só aceita computadores pareados, sem duplicados, nunca o próprio) e desconectar um computador (`pairing::remove_device`: tira de todas as pastas e remove; arquivos ficam; idempotente) | integração com 2 Syncthing reais (`pairing_flow`: recusa lista vazia/o próprio, remove e confere pasta e dispositivo, repete sem erro); 2 testes de mock (PATCH só `devices`, DELETE com ID validado) |
+| ✅ 8.2 | Tailscale: aceita as máquinas **marcadas** da rede (ex.: `tag:escritorio`, que pertencem à rede e não a um usuário) além das da própria conta; continua recusando nós compartilhados de outras redes (`ShareeNode`) e de outros usuários | teste com 5 casos |
+| ✅ 8.3 | Papel deste computador em Preferências: **Uso pessoal**, **Central do escritório**, **Computador do time** (`workspace.json` na pasta de configuração do app). Central: tela "Computadores do time" com cartões (estado, pastas, velocidade, Desconectar), textos do escritório. Membro: não desconecta nem inclui computadores (feito pela central) | testes de componente (`Team.test.tsx`, `team.test.ts`); `docs/screenshot-team.jpg` |
+| ✅ 8.4 | Telas para N computadores: escolher quem recebe ao adicionar pasta (lista com marcar todos), **Compartilhar com…** em cada pasta (avisa quem vai parar de receber), linha da pasta mostra com quem é compartilhada, "Esperando note-carla" em vez de "o outro", textos sem "os dois" quando há mais | `docs/screenshot-share.jpg` (dados simulados). Com computadores reais 🖐 |
+
+Próximas (plano de 2026-11-22): 9 convite para os PCs do time (só falam com a central), 10 painel de Atividade, 11 blindagem (regras do Tailscale, verificação de criptografia de disco, registro de ações), 12 acesso remoto à tela (RDP no Windows Pro) e implantação.
+
 ## Paralelismo previsto
 - 0.2 e 1.2/1.3/1.4 em agentes paralelos (lógica pura, independentes).
 - 3.1 e 3.2 em paralelo (SOs diferentes).

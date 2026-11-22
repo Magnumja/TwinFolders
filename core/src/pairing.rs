@@ -12,7 +12,9 @@ use std::fs;
 use std::io;
 use std::path::Path;
 
-use crate::client::{self, Folder, PendingDevice, PendingFolder, SyncthingClient, Versioning};
+use crate::client::{
+    self, Folder, FolderDevice, PendingDevice, PendingFolder, SyncthingClient, Versioning,
+};
 use crate::stignore;
 
 /// Days to keep old versions by default (staggered versioning).
@@ -28,6 +30,10 @@ pub enum Error {
     /// A folder with this ID already exists locally; sharing/accepting
     /// never overwrites an existing folder's config.
     AlreadyExists(String),
+    /// Sharing needs at least one other computer.
+    NoPeers,
+    /// Not a paired computer (or this computer itself, or listed twice).
+    UnknownPeer(String),
 }
 
 impl fmt::Display for Error {
@@ -37,6 +43,8 @@ impl fmt::Display for Error {
             Error::Io(e) => write!(f, "file system error: {e}"),
             Error::InvalidPath(p) => write!(f, "invalid folder path: {p}"),
             Error::AlreadyExists(id) => write!(f, "folder {id:?} already exists"),
+            Error::NoPeers => write!(f, "escolha pelo menos um computador para compartilhar"),
+            Error::UnknownPeer(id) => write!(f, "computador não pareado: {id}"),
         }
     }
 }
@@ -183,19 +191,88 @@ pub struct ShareRequest<'a> {
     pub label: &'a str,
     pub path: &'a Path,
     pub local_id: &'a str,
-    pub peer_id: &'a str,
+    /// Computers to share with (at least one, all already paired).
+    pub peer_ids: &'a [&'a str],
     pub extra_ignores: &'a [&'a str],
 }
 
-/// Shares a local folder with the peer (send-receive, versioned).
+/// Checks that `peer_ids` is non-empty, has no duplicates, excludes this
+/// computer and only names paired devices.
+fn check_peers(c: &SyncthingClient, local_id: &str, peer_ids: &[&str]) -> Result<()> {
+    if peer_ids.is_empty() {
+        return Err(Error::NoPeers);
+    }
+    let known: Vec<String> = c.devices()?.into_iter().map(|d| d.device_id).collect();
+    for (i, p) in peer_ids.iter().enumerate() {
+        if *p == local_id || !known.iter().any(|k| k == p) || peer_ids[..i].contains(p) {
+            return Err(Error::UnknownPeer(p.to_string()));
+        }
+    }
+    Ok(())
+}
+
+/// Shares a local folder with one or more paired computers (send-receive,
+/// versioned). Each of them gets an offer to accept.
 pub fn share_folder(c: &SyncthingClient, r: &ShareRequest<'_>) -> Result<Folder> {
     let path = path_str(r.path)?;
+    check_peers(c, r.local_id, r.peer_ids)?;
     ensure_new_folder(c, r.id)?;
     prepare_folder_dir(r.path, r.extra_ignores)?;
-    let folder = Folder::new(r.id, r.label, path, &[r.local_id, r.peer_id])
+    let mut ids = vec![r.local_id];
+    ids.extend_from_slice(r.peer_ids);
+    let folder = Folder::new(r.id, r.label, path, &ids)
         .with_versioning(Versioning::staggered_days(DEFAULT_VERSIONING_DAYS));
     c.put_folder(&folder)?;
     Ok(folder)
+}
+
+/// Sets which paired computers an existing folder is shared with. Entries
+/// that stay keep their settings; newly added computers get an offer;
+/// removed ones stop receiving changes (their copy of the files stays).
+pub fn set_folder_peers(
+    c: &SyncthingClient,
+    folder_id: &str,
+    local_id: &str,
+    peer_ids: &[&str],
+) -> Result<()> {
+    check_peers(c, local_id, peer_ids)?;
+    let folder = c.folder(folder_id)?;
+    let mut devices: Vec<FolderDevice> = folder
+        .devices
+        .iter()
+        .filter(|d| d.device_id == local_id || peer_ids.contains(&d.device_id.as_str()))
+        .cloned()
+        .collect();
+    if !devices.iter().any(|d| d.device_id == local_id) {
+        devices.insert(0, FolderDevice::new(local_id));
+    }
+    for p in peer_ids {
+        if !devices.iter().any(|d| d.device_id == *p) {
+            devices.push(FolderDevice::new(p));
+        }
+    }
+    c.set_folder_devices(folder_id, &devices)?;
+    Ok(())
+}
+
+/// Disconnects a computer: unshares every folder with it, then removes it.
+/// Files already on that computer stay there (Syncthing never deletes them),
+/// but it receives nothing more from this one. Idempotent.
+pub fn remove_device(c: &SyncthingClient, device_id: &str) -> Result<()> {
+    for f in c.folders()? {
+        if f.devices.iter().any(|d| d.device_id == device_id) {
+            let keep: Vec<FolderDevice> = f
+                .devices
+                .into_iter()
+                .filter(|d| d.device_id != device_id)
+                .collect();
+            c.set_folder_devices(&f.id, &keep)?;
+        }
+    }
+    if c.devices()?.iter().any(|d| d.device_id == device_id) {
+        c.remove_device(device_id)?;
+    }
+    Ok(())
 }
 
 /// Accepts a folder the peer offered, storing it at `path` on this machine.

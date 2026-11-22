@@ -27,6 +27,8 @@ import { useToast } from "./Toasts";
 import { AddDeviceForm, ConnectGuide, IdBlocks } from "./Guide";
 import { pairingStage } from "../lib/pairing";
 import { RemotePanel } from "./Remote";
+import { DeviceGrid, useRole } from "./Team";
+import { sharedWith } from "../lib/team";
 import {
   Dot,
   Empty,
@@ -60,6 +62,7 @@ export interface Actions {
   add: () => void;
   ignores: (f: FolderView) => void;
   versions: (f: FolderView) => void;
+  share: (f: FolderView) => void;
   go: (v: View) => void;
 }
 
@@ -230,7 +233,7 @@ function useFolderActions(f: FolderView, actions: Actions) {
   };
   const remove = async () => {
     const ok = await ask(
-      `Parar de sincronizar "${f.label}"?\n\nOs arquivos continuam neste computador e no outro; só a sincronização é desligada.`,
+      `Parar de sincronizar "${f.label}"?\n\nOs arquivos continuam neste computador e nos outros; só a sincronização é desligada.`,
       { title: "Parar de sincronizar", kind: "warning", okLabel: "Parar de sincronizar", cancelLabel: "Cancelar" },
     );
     if (!ok) return;
@@ -247,6 +250,7 @@ function useFolderActions(f: FolderView, actions: Actions) {
 }
 
 function RowMenu({ f, actions }: { f: FolderView; actions: Actions }) {
+  const role = useRole();
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
   const act = useFolderActions(f, actions);
@@ -282,6 +286,7 @@ function RowMenu({ f, actions }: { f: FolderView; actions: Actions }) {
             transition={springs.instant}
           >
             <button role="menuitem" onClick={run(act.reveal)}>Abrir no {navigator.userAgent.includes("Windows") ? "Explorer" : "Finder"}</button>
+            {role !== "member" && <button role="menuitem" onClick={run(() => actions.share(f))}>Compartilhar com…</button>}
             <button role="menuitem" onClick={run(act.togglePause)}>{f.health.kind === "paused" ? "Retomar sincronização" : "Pausar sincronização"}</button>
             <button role="menuitem" onClick={run(() => actions.versions(f))}>Histórico de versões</button>
             <button role="menuitem" onClick={run(() => actions.ignores(f))}>Arquivos ignorados</button>
@@ -312,7 +317,9 @@ function StatusCell({ f, onResume }: { f: FolderView; onResume: () => void }) {
       </span>
     );
   }
-  const text = f.health.kind === "upToDate" ? "Em dia" : f.health.kind === "waitingForPeer" ? "Esperando o outro" : h.label;
+  const offline = f.peers.filter((p) => !p.connected);
+  const waiting = f.peers.length > 1 && offline.length > 0 ? `Esperando ${offline.length === 1 ? offline[0].name || "um computador" : `${offline.length} computadores`}` : "Esperando o outro";
+  const text = f.health.kind === "upToDate" ? "Em dia" : f.health.kind === "waitingForPeer" ? waiting : h.label;
   return (
     <span className={`status status-${h.tone}`}>
       <span className="status-line">
@@ -322,7 +329,7 @@ function StatusCell({ f, onResume }: { f: FolderView; onResume: () => void }) {
   );
 }
 
-function FolderRow({ f, actions, compact }: { f: FolderView; actions: Actions; compact?: boolean }) {
+function FolderRow({ f, actions, compact, devices }: { f: FolderView; actions: Actions; compact?: boolean; devices?: DeviceView[] }) {
   const h = describeHealth(f.health);
   const act = useFolderActions(f, actions);
   return (
@@ -333,7 +340,7 @@ function FolderRow({ f, actions, compact }: { f: FolderView; actions: Actions; c
         </button>
         <span className="grow">
           <button className="name-btn ellipsis" onClick={act.reveal} title={`Abrir ${f.path}`}>{f.label}</button>
-          <span className="sub ellipsis" title={f.path}>{f.path}</span>
+          <span className="sub ellipsis" title={f.path}>{devices && devices.length > 1 ? sharedWith(f, devices) : f.path}</span>
           {h.detail && <span className="error small block">{h.detail}</span>}
         </span>
       </span>
@@ -353,7 +360,7 @@ function FolderRow({ f, actions, compact }: { f: FolderView; actions: Actions; c
   );
 }
 
-export function FoldersTable({ folders, actions, limit, compact, title = "Suas pastas" }: { folders: FolderView[]; actions: Actions; limit?: number; compact?: boolean; title?: string }) {
+export function FoldersTable({ folders, actions, limit, compact, title = "Suas pastas", devices }: { folders: FolderView[]; actions: Actions; limit?: number; compact?: boolean; title?: string; devices?: DeviceView[] }) {
   const [tab, setTab] = useState<FolderTab>("all");
   const [query, setQuery] = useState("");
   const syncing = folders.filter((f) => f.health.kind === "syncing" || f.health.kind === "scanning").length;
@@ -380,7 +387,7 @@ export function FoldersTable({ folders, actions, limit, compact, title = "Suas p
         <Empty
           icon={<IconFolder size={28} />}
           title="Nenhuma pasta ainda"
-          text="Escolha uma pasta para manter igual nos dois computadores."
+          text="Escolha uma pasta para manter igual entre os seus computadores."
           action={<button className="btn btn-primary" onClick={actions.add}><IconPlus /> Adicionar pasta</button>}
         />
       ) : (
@@ -410,7 +417,7 @@ export function FoldersTable({ folders, actions, limit, compact, title = "Suas p
             </div>
             <AnimatePresence mode="popLayout" initial={false}>
               {visible.map((f) => (
-                <FolderRow key={f.id} f={f} actions={actions} compact={compact} />
+                <FolderRow key={f.id} f={f} actions={actions} compact={compact} devices={devices} />
               ))}
             </AnimatePresence>
             {visible.length === 0 && (
@@ -444,14 +451,14 @@ function TransferCard({ overview }: { overview: Overview }) {
           </div>
           <Progress percent={t.percent} tone="busy" />
           <p className="sub">
-            {t.rate >= 1 ? `${formatRate(t.rate)} vindo de ${from?.name || "outro computador"}` : "Esperando dados do outro computador"}
+            {t.rate >= 1 ? `${formatRate(t.rate)} vindo de ${from?.name || "outro computador"}` : "Esperando dados de outro computador"}
             {t.etaSeconds !== null && <>, {formatEta(t.etaSeconds).replace("~", "cerca de ").replace(" restantes", "")}</>}
           </p>
         </div>
       ) : (
         <div className="transfer-idle">
           <p className="side-title">Nada chegando agora</p>
-          <p className="sub">{newest ? `A última mudança chegou ${relativeTime(newest)}.` : "Quando um arquivo mudar no outro computador, você vê o progresso aqui."}</p>
+          <p className="sub">{newest ? `A última mudança chegou ${relativeTime(newest)}.` : "Quando um arquivo mudar em outro computador, você vê o progresso aqui."}</p>
         </div>
       )}
     </section>
@@ -485,7 +492,7 @@ function SideCallouts({ overview, conflicts, go }: { overview: Overview; conflic
   return (
     <AnimatePresence initial={false}>
       {conflicts > 0 && (
-        <Callout key="c" tone="wait" icon={<IconAlert />} title={conflicts === 1 ? "Resolver 1 conflito" : `Resolver ${conflicts} conflitos`} text="O mesmo arquivo mudou nos dois lados. Nada foi perdido." onClick={() => go("pending")} />
+        <Callout key="c" tone="wait" icon={<IconAlert />} title={conflicts === 1 ? "Resolver 1 conflito" : `Resolver ${conflicts} conflitos`} text="O mesmo arquivo mudou em dois lugares. Nada foi perdido." onClick={() => go("pending")} />
       )}
       {pd.length > 0 && (
         <Callout key="d" tone="busy" icon={<IconMonitor />} title={`${pd[0].name || shortId(pd[0].deviceId)} quer se conectar`} text="Aprove só se for um computador seu." onClick={() => go("pending")} />
@@ -500,15 +507,17 @@ function SideCallouts({ overview, conflicts, go }: { overview: Overview; conflic
 /* ---------- views ---------- */
 
 export function OverviewView({ overview, profile, conflicts, actions }: { overview: Overview; profile: Profile | null; conflicts: FolderConflicts[]; actions: Actions }) {
+  const role = useRole();
   const n = totalConflicts(conflicts);
-  const h = hero(overview, n);
+  const h = hero(overview, n, role);
+  const team = role === "hub" || overview.devices.length > 1;
   return (
     <div className="view">
       <Hero title={h.title} sub={h.sub} action={overview.devices.some((d) => d.connected || d.lastSeen) ? <AddButton onClick={actions.add} /> : undefined} />
       <ConnectGuide overview={overview} onChanged={actions.refresh} onAddFolder={actions.add} go={actions.go} />
-      {overview.devices.length > 0 && <LinkCard overview={overview} profile={profile} />}
+      {overview.devices.length > 0 && (team ? <DeviceGrid overview={overview} onChanged={actions.refresh} /> : <LinkCard overview={overview} profile={profile} />)}
       {overview.folders.length > 0 && <div className="split">
-        <FoldersTable folders={overview.folders} actions={actions} limit={6} compact />
+        <FoldersTable folders={overview.folders} actions={actions} limit={6} compact devices={overview.devices} />
         <div className="side">
           <TransferCard overview={overview} />
           <SideCallouts overview={overview} conflicts={n} go={actions.go} />
@@ -519,28 +528,50 @@ export function OverviewView({ overview, profile, conflicts, actions }: { overvi
 }
 
 export function FoldersView({ overview, actions }: { overview: Overview; actions: Actions }) {
+  const role = useRole();
+  const sub = overview.devices.length > 1 || role === "hub"
+    ? "Cada pasta fica igual em todos os computadores com quem ela é compartilhada. Use Compartilhar com… para escolher quem recebe."
+    : "Tudo o que fica igual nos dois computadores. Clique numa pasta para abri-la.";
   return (
     <div className="view">
-      <Hero title="Suas pastas" sub="Tudo o que fica igual nos dois computadores. Clique numa pasta para abri-la." action={overview.devices.length > 0 ? <AddButton onClick={actions.add} /> : undefined} />
-      <FoldersTable folders={overview.folders} actions={actions} title="Todas as pastas" />
+      <Hero title="Suas pastas" sub={sub} action={overview.devices.length > 0 ? <AddButton onClick={actions.add} /> : undefined} />
+      <FoldersTable folders={overview.folders} actions={actions} title="Todas as pastas" devices={overview.devices} />
     </div>
   );
 }
 
 export function ComputersView({ overview, profile, actions }: { overview: Overview; profile: Profile | null; actions: Actions }) {
+  const role = useRole();
   const stage = pairingStage(overview);
   const guided = stage !== "done" && stage !== "offline";
+  const team = role === "hub" || overview.devices.length > 1;
+  const sub =
+    role === "hub"
+      ? "Os computadores do time conectados a esta central. Para incluir mais um, cole o ID dele aqui."
+      : role === "member"
+        ? "Este computador fala só com a central do escritório."
+        : "Os aparelhos que fazem parte do seu espaço. Para conectar um novo, cole o ID dele aqui.";
   return (
     <div className="view">
-      <Hero title="Seus computadores" sub="Os aparelhos que fazem parte do seu espaço. Para conectar um novo, cole o ID dele aqui." />
-      {overview.devices.length > 0 && <LinkCard overview={overview} profile={profile} />}
-      {guided ? (
+      <Hero title={role === "hub" ? "Computadores do time" : "Seus computadores"} sub={sub} />
+      {overview.devices.length > 0 && !team && <LinkCard overview={overview} profile={profile} />}
+      {overview.devices.length > 0 && <DeviceGrid overview={overview} onChanged={actions.refresh} />}
+      {role === "member" && overview.devices.length > 0 ? (
+        <section className="panel add-panel">
+          <div className="panel-head">
+            <div>
+              <h2>Ligado à central</h2>
+              <p className="sub">Novos computadores são incluídos pela central do escritório. Se precisar trocar de central, mude o papel deste computador em Preferências.</p>
+            </div>
+          </div>
+        </section>
+      ) : guided ? (
         <ConnectGuide overview={overview} onChanged={actions.refresh} onAddFolder={actions.add} go={actions.go} />
       ) : (
         <section className="panel add-panel">
           <div className="panel-head">
             <div>
-              <h2>Conectar outro computador</h2>
+              <h2>{role === "hub" ? "Incluir um computador do time" : "Conectar outro computador"}</h2>
               <p className="sub">Cole o ID do computador novo. Ele recebe um pedido e você aprova lá.</p>
             </div>
           </div>
@@ -567,7 +598,7 @@ export function PendingView({ overview, conflicts, actions }: { overview: Overvi
       <Hero title={nothing ? "Nada esperando por você." : "O que precisa de você"} sub="Pedidos de pareamento, pastas oferecidas e conflitos. Nada é aceito sem a sua escolha." />
       <Pending overview={overview} onChange={actions.refresh} />
       <Conflicts all={conflicts} overview={overview} onChange={actions.refreshConflicts} />
-      {nothing && <Empty icon={<IconInbox size={28} />} title="Tudo em dia" text="Quando o outro computador pedir algo, aparece aqui e numa notificação." />}
+      {nothing && <Empty icon={<IconInbox size={28} />} title="Tudo em dia" text="Quando outro computador pedir algo, aparece aqui e numa notificação." />}
     </div>
   );
 }

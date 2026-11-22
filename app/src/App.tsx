@@ -3,7 +3,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { AnimatePresence, motion } from "motion/react";
-import type { FolderConflicts, FolderView, Profile, Snapshot, View } from "./types";
+import type { FolderConflicts, FolderView, Profile, Role, Snapshot, View, Workspace } from "./types";
 import { totalConflicts } from "./lib/conflicts";
 import { motionTokens } from "./lib/motion-tokens";
 import { useSafeMotion } from "./hooks/useSafeMotion";
@@ -14,6 +14,7 @@ import { Preferences, Sidebar, Topbar, VIEW_KEYS } from "./components/Shell";
 import { ComputersView, FoldersView, OverviewView, PendingView, type Actions } from "./components/Views";
 import { HelpView } from "./components/Guide";
 import { SetupView } from "./components/Setup";
+import { RoleContext, ShareEditor } from "./components/Team";
 import { ToastProvider, useToast } from "./components/Toasts";
 
 const POLL_MS = 3000;
@@ -58,6 +59,8 @@ function AppShell() {
   const [editing, setEditing] = useState<FolderView | null>(null);
   const [versioning, setVersioning] = useState<FolderView | null>(null);
   const [prefs, setPrefs] = useState(false);
+  const [sharing, setSharing] = useState<FolderView | null>(null);
+  const [role, setRoleState] = useState<Role>("personal");
   const [conflicts, setConflicts] = useState<FolderConflicts[]>([]);
   const toast = useToast();
   const m = useSafeMotion(motionTokens.distance.sm);
@@ -90,7 +93,20 @@ function AppShell() {
 
   useEffect(() => {
     invoke<Profile>("get_profile").then(setProfile).catch(() => setProfile(null));
+    invoke<Workspace>("get_workspace").then((w) => setRoleState(w.role)).catch(() => undefined);
   }, []);
+
+  const changeRole = useCallback(
+    async (r: Role) => {
+      try {
+        await invoke("set_role", { role: r });
+        setRoleState(r);
+      } catch (e) {
+        toast("error", `Não foi possível salvar: ${e}`);
+      }
+    },
+    [toast],
+  );
 
   useEffect(() => {
     refreshConflicts();
@@ -123,6 +139,7 @@ function AppShell() {
       refreshConflicts,
       add: () => setAdding(true),
       ignores: setEditing,
+      share: setSharing,
       versions: setVersioning,
       go: setView,
     }),
@@ -135,7 +152,7 @@ function AppShell() {
 
   // Keyboard: 1–4 switch screens, N adds a folder, R refreshes. Ignored
   // while typing or when a dialog is open.
-  const modalOpen = adding || !!editing || !!versioning || prefs;
+  const modalOpen = adding || !!editing || !!versioning || prefs || !!sharing;
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (modalOpen || e.metaKey || e.ctrlKey || e.altKey) return;
@@ -154,6 +171,7 @@ function AppShell() {
   const screen = overview || view === "help" ? view : state;
 
   return (
+    <RoleContext.Provider value={role}>
     <div className="shell">
       <Sidebar overview={overview} profile={profile} view={view} conflicts={nConflicts} onSelect={setView} onPreferences={() => setPrefs(true)} />
       <div className="main-col">
@@ -192,16 +210,18 @@ function AppShell() {
             onClose={() => setAdding(false)}
             onDone={(label) => {
               setAdding(false);
-              toast("ok", `"${label}" agora é sincronizada. Aceite a pasta no outro computador.`);
+              toast("ok", `"${label}" agora é sincronizada. Aceite a pasta em cada computador escolhido.`);
               refresh();
             }}
           />
         )}
         {editing && <IgnoreEditor key="ign" folder={editing} onClose={() => setEditing(null)} />}
         {versioning && <VersioningEditor key="ver" folder={versioning} onClose={() => setVersioning(null)} />}
-        {prefs && <Preferences key="prefs" onClose={() => setPrefs(false)} />}
+        {sharing && overview && <ShareEditor key="share" folder={sharing} devices={overview.devices} onClose={() => setSharing(null)} onSaved={refresh} />}
+        {prefs && <Preferences key="prefs" role={role} onRole={changeRole} onClose={() => setPrefs(false)} />}
       </AnimatePresence>
     </div>
+    </RoleContext.Provider>
   );
 }
 

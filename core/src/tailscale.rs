@@ -30,6 +30,12 @@ pub struct TsPeer {
     /// Owner account (`UserID`); 0 when unknown.
     #[serde(skip)]
     pub user_id: i64,
+    /// Has ACL tags (e.g. `tag:escritorio`): owned by the tailnet, not a user.
+    #[serde(skip)]
+    pub tagged: bool,
+    /// Shared in from another tailnet (`ShareeNode`).
+    #[serde(skip)]
+    pub sharee: bool,
 }
 
 impl TsPeer {
@@ -79,6 +85,14 @@ fn peer(v: &Value) -> Option<TsPeer> {
         ips,
         online: v.get("Online").and_then(Value::as_bool).unwrap_or(false),
         user_id: v.get("UserID").and_then(Value::as_i64).unwrap_or(0),
+        tagged: v
+            .get("Tags")
+            .and_then(Value::as_array)
+            .is_some_and(|t| !t.is_empty()),
+        sharee: v
+            .get("ShareeNode")
+            .and_then(Value::as_bool)
+            .unwrap_or(false),
     })
 }
 
@@ -97,10 +111,12 @@ pub fn parse_status(json: &str) -> Result<TsStatus, String> {
         .map(|m| m.values().filter_map(peer).collect())
         .unwrap_or_default();
     let me = v.get("Self").and_then(peer);
-    // Only this account's own machines: nodes shared in from other users
-    // (or other tailnets) must never become an SSH target.
+    // Only this account's own machines, plus this tailnet's tagged machines
+    // (office PCs tagged by the admin, e.g. `tag:escritorio`, belong to the
+    // tailnet instead of a user). Nodes shared in from other users or other
+    // tailnets must never become an SSH target.
     if let Some(owner) = me.as_ref().map(|m| m.user_id).filter(|id| *id != 0) {
-        peers.retain(|p| p.user_id == owner);
+        peers.retain(|p| !p.sharee && (p.user_id == owner || p.tagged));
     }
     peers.sort_by(|a, b| {
         b.online
@@ -321,6 +337,24 @@ mod tests {
             .iter()
             .all(|p| p.host_name != "pc-escritorio" || p.dns_name.contains("tail1234")));
         assert_eq!(match_device(&s.peers, &["tcp://100.99.9.9:22001"]), None);
+    }
+
+    #[test]
+    fn tagged_office_machines_count_but_shared_in_ones_do_not() {
+        let json = r#"{
+          "BackendState": "Running",
+          "Self": {"HostName": "mac-ana", "TailscaleIPs": ["100.64.0.1"], "UserID": 7},
+          "Peer": {
+            "a": {"HostName": "note-1", "TailscaleIPs": ["100.64.0.2"], "UserID": 99, "Tags": ["tag:escritorio"]},
+            "b": {"HostName": "intruso", "TailscaleIPs": ["100.64.0.3"], "UserID": 55},
+            "c": {"HostName": "vizinho", "TailscaleIPs": ["100.64.0.4"], "UserID": 99, "Tags": ["tag:x"], "ShareeNode": true},
+            "d": {"HostName": "pc-ana", "TailscaleIPs": ["100.64.0.5"], "UserID": 7, "ShareeNode": true},
+            "e": {"HostName": "note-2", "TailscaleIPs": ["100.64.0.6"], "UserID": 99, "Tags": []}
+          }
+        }"#;
+        let s = parse_status(json).unwrap();
+        let names: Vec<&str> = s.peers.iter().map(|p| p.host_name.as_str()).collect();
+        assert_eq!(names, vec!["note-1"]);
     }
 
     #[test]

@@ -342,6 +342,15 @@ pub fn validate_folder_id(id: &str) -> Result<()> {
     }
 }
 
+/// Device IDs also go into URL paths: letters, digits and dashes only.
+fn validate_device_id(id: &str) -> Result<()> {
+    if (1..=72).contains(&id.len()) && id.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-') {
+        Ok(())
+    } else {
+        Err(Error::InvalidFolderId(id.to_string()))
+    }
+}
+
 fn sanitize_body(body: &str) -> String {
     let clean: String = body.chars().filter(|c| !c.is_control()).collect();
     if clean.len() <= MAX_ERROR_BODY {
@@ -623,6 +632,33 @@ impl SyncthingClient {
             &format!("/rest/config/folders/{id}"),
             &serde_json::json!({ "versioning": v }),
         )
+    }
+
+    /// Replaces the list of devices a folder is shared with (include the
+    /// local device). Other folder settings are untouched.
+    pub fn set_folder_devices(&self, id: &str, devices: &[FolderDevice]) -> Result<()> {
+        validate_folder_id(id)?;
+        self.send_json(
+            "PATCH",
+            &format!("/rest/config/folders/{id}"),
+            &serde_json::json!({ "devices": devices }),
+        )
+    }
+
+    /// Removes a device from the config. Callers unshare its folders first
+    /// (see `pairing::remove_device`).
+    pub fn remove_device(&self, device_id: &str) -> Result<()> {
+        validate_device_id(device_id)?;
+        let resp = self
+            .agent
+            .delete(self.url(&format!("/rest/config/devices/{device_id}")))
+            .header("X-API-Key", &self.api_key)
+            .config()
+            .timeout_global(Some(DEFAULT_TIMEOUT))
+            .build()
+            .call()
+            .map_err(transport)?;
+        Self::check(resp).map(|_| ())
     }
 
     /// Pauses or resumes one folder (other settings untouched).

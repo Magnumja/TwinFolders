@@ -82,7 +82,7 @@ fn explicit_pairing_then_share_and_accept_folder() {
             label: "Documentos Pessoais",
             path: &mac_dir,
             local_id: &mac.id,
-            peer_id: &win.id,
+            peer_ids: &[&win.id],
             extra_ignores: &["*.psd"],
         },
     )
@@ -125,6 +125,35 @@ fn explicit_pairing_then_share_and_accept_folder() {
         !win_dir.join("art.psd").exists(),
         "*.psd ignored on mac side"
     );
+
+    // 6. sharing only with paired computers; then disconnect windows.
+    assert!(matches!(
+        pairing::set_folder_peers(&mac.client, &folder_id, &mac.id, &[]),
+        Err(pairing::Error::NoPeers)
+    ));
+    assert!(matches!(
+        pairing::set_folder_peers(&mac.client, &folder_id, &mac.id, &[&mac.id]),
+        Err(pairing::Error::UnknownPeer(_))
+    ));
+    pairing::set_folder_peers(&mac.client, &folder_id, &mac.id, &[&win.id]).unwrap();
+    pairing::remove_device(&mac.client, &win.id).unwrap();
+    let f = mac.client.folder(&folder_id).unwrap();
+    assert_eq!(
+        f.devices
+            .iter()
+            .map(|d| d.device_id.as_str())
+            .collect::<Vec<_>>(),
+        vec![mac.id.as_str()],
+        "folder no longer shared with the removed computer"
+    );
+    assert!(!mac
+        .client
+        .devices()
+        .unwrap()
+        .iter()
+        .any(|d| d.device_id == win.id));
+    pairing::remove_device(&mac.client, &win.id).unwrap(); // idempotent
+    assert!(mac_dir.join("from-win.txt").exists(), "files are kept");
 
     drop(mac);
     drop(win);

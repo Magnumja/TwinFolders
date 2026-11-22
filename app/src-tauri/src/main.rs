@@ -589,7 +589,7 @@ async fn share_folder(
     state: State<'_, Arc<AppState>>,
     path: String,
     label: String,
-    peer_id: String,
+    peer_ids: Vec<String>,
     extra_ignores: Vec<String>,
 ) -> Result<String, String> {
     with_client(state.inner(), move |c| {
@@ -601,6 +601,7 @@ async fn share_folder(
             .map(|f| f.id)
             .collect();
         let id = pairing::folder_id_for(&label, &existing);
+        let peers: Vec<&str> = peer_ids.iter().map(String::as_str).collect();
         let extras: Vec<&str> = extra_ignores.iter().map(String::as_str).collect();
         pairing::share_folder(
             c,
@@ -609,7 +610,7 @@ async fn share_folder(
                 label: &label,
                 path: std::path::Path::new(&path),
                 local_id: &local_id,
-                peer_id: &peer_id,
+                peer_ids: &peers,
                 extra_ignores: &extras,
             },
         )
@@ -617,6 +618,80 @@ async fn share_folder(
         Ok(id)
     })
     .await
+}
+
+/// Sets which paired computers a folder is shared with.
+#[tauri::command]
+async fn set_folder_peers(
+    state: State<'_, Arc<AppState>>,
+    folder_id: String,
+    peer_ids: Vec<String>,
+) -> Result<(), String> {
+    with_client(state.inner(), move |c| {
+        let local_id = c.my_id().map_err(|e| e.to_string())?;
+        let peers: Vec<&str> = peer_ids.iter().map(String::as_str).collect();
+        pairing::set_folder_peers(c, &folder_id, &local_id, &peers).map_err(|e| e.to_string())
+    })
+    .await
+}
+
+/// Disconnects a computer: unshares every folder with it and removes it.
+/// Its files stay where they are.
+#[tauri::command]
+async fn remove_device(state: State<'_, Arc<AppState>>, device_id: String) -> Result<(), String> {
+    with_client(state.inner(), move |c| {
+        pairing::remove_device(c, &device_id).map_err(|e| e.to_string())
+    })
+    .await
+}
+
+/* ---------- role of this computer ---------- */
+
+/// How this computer is used: a personal pair, the office's central
+/// computer (sees and orchestrates the team's), or a team member's.
+#[derive(Serialize, serde::Deserialize, Clone, Copy, PartialEq, Eq, Default, Debug)]
+#[serde(rename_all = "camelCase")]
+enum Role {
+    #[default]
+    Personal,
+    Hub,
+    Member,
+}
+
+#[derive(Serialize, serde::Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+struct Workspace {
+    #[serde(default)]
+    role: Role,
+}
+
+fn workspace_file(app: &AppHandle) -> Option<PathBuf> {
+    app.path()
+        .app_config_dir()
+        .ok()
+        .map(|d| d.join("workspace.json"))
+}
+
+#[tauri::command]
+fn get_workspace(app: AppHandle) -> Workspace {
+    workspace_file(&app)
+        .and_then(|p| std::fs::read_to_string(p).ok())
+        .and_then(|s| serde_json::from_str(&s).ok())
+        .unwrap_or_default()
+}
+
+#[tauri::command]
+fn set_role(app: AppHandle, role: Role) -> Result<(), String> {
+    let path = workspace_file(&app).ok_or("pasta de configuração indisponível")?;
+    if let Some(dir) = path.parent() {
+        std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
+    }
+    let ws = Workspace { role };
+    std::fs::write(
+        &path,
+        serde_json::to_string_pretty(&ws).map_err(|e| e.to_string())?,
+    )
+    .map_err(|e| e.to_string())
 }
 
 /// Accepts a folder offered by a paired device, stored at `path` here.
@@ -930,6 +1005,10 @@ fn main() {
             add_device,
             scan_folder,
             share_folder,
+            set_folder_peers,
+            remove_device,
+            get_workspace,
+            set_role,
             accept_folder,
             remove_folder,
             set_folder_paused,

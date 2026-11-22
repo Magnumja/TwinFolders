@@ -485,3 +485,33 @@ mod add_peer {
         none.assert();
     }
 }
+
+#[test]
+fn set_folder_devices_patches_only_devices() {
+    let mut s = Server::new();
+    let m = s
+        .mock("PATCH", "/rest/config/folders/twin-docs")
+        .match_body(Matcher::JsonString(
+            r#"{"devices":[{"deviceID":"A"},{"deviceID":"C"}]}"#.into(),
+        ))
+        .create();
+    client(&s)
+        .set_folder_devices(
+            "twin-docs",
+            &[FolderDevice::new("A"), FolderDevice::new("C")],
+        )
+        .unwrap();
+    m.assert();
+}
+
+#[test]
+fn remove_device_deletes_by_id_and_rejects_unsafe_ids() {
+    let mut s = Server::new();
+    let m = s
+        .mock("DELETE", "/rest/config/devices/AAAAAAA-BBBBBBB")
+        .create();
+    client(&s).remove_device("AAAAAAA-BBBBBBB").unwrap();
+    m.assert();
+    assert!(client(&s).remove_device("../folders/x").is_err());
+    assert!(client(&s).remove_device("").is_err());
+}

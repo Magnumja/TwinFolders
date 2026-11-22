@@ -122,6 +122,19 @@ Depois disso é só usar: edite, crie e apague arquivos normalmente. Clique numa
 
 <p align="center"><img src="docs/screenshot-connect.jpg" alt="Guia passo a passo para conectar os dois computadores" width="640"></p>
 
+## Vários computadores (escritório)
+
+O TwinFolders também funciona com mais de dois computadores. Por exemplo, o Mac de quem coordena como **central** e os notebooks e PCs do time.
+
+1. Em **Preferências → Como você usa este computador**, escolha **Central do escritório** no computador principal e **Computador do time** nos outros.
+2. Conecte cada computador do time à central (o mesmo processo de colar o ID e aprovar).
+3. Ao adicionar uma pasta, marque quais computadores a recebem. Depois, mude isso quando quiser em **⋯ → Compartilhar com…**.
+4. Em **Computadores**, a central vê cada computador: se está online, quando foi visto pela última vez, quais pastas recebe. Ali também dá para **desconectar** um computador; os arquivos que já estão nele ficam lá.
+
+![Central do escritório](docs/screenshot-team.jpg)
+
+Para computadores fora da mesma rede, use o Tailscale. Máquinas da empresa marcadas com uma etiqueta (por exemplo `tag:escritorio`) são reconhecidas como da sua rede.
+
 ## Acesso por SSH (opcional)
 
 Para abrir um terminal no outro computador de qualquer lugar, os dois precisam do [Tailscale](https://tailscale.com/download) com a mesma conta. Depois, uma vez em cada máquina:

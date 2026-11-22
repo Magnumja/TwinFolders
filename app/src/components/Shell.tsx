@@ -9,6 +9,8 @@ import { useSafeMotion } from "../hooks/useSafeMotion";
 import { linkState } from "./Views";
 import { Modal } from "./Modal";
 import { IconFolder, IconGear, IconGrid, IconHelp, IconInbox, IconMonitor, IconRefresh, IconShield, SwapText } from "./ui";
+import type { Role } from "../types";
+import { RolePicker } from "./Team";
 
 export const VIEW_KEYS: View[] = ["overview", "folders", "computers", "pending", "help"];
 
@@ -151,7 +153,7 @@ export function Topbar({ view, profile, onRefresh }: { view: View; profile: Prof
   );
 }
 
-export function Preferences({ onClose }: { onClose: () => void }) {
+export function Preferences({ role, onRole, onClose }: { role: Role; onRole: (r: Role) => void; onClose: () => void }) {
   const [autostart, setAutostart] = useState<boolean | null>(null);
   useEffect(() => {
     isEnabled().then(setAutostart).catch(() => setAutostart(null));
@@ -175,6 +177,7 @@ export function Preferences({ onClose }: { onClose: () => void }) {
           </span>
           <input type="checkbox" className="switch" checked={!!autostart} disabled={autostart === null} onChange={toggle} />
         </label>
+        <RolePicker role={role} onChange={onRole} />
         <div className="actions">
           <button className="btn" onClick={onClose}>Fechar</button>
         </div>

@@ -136,4 +136,11 @@ export interface Profile {
   version: string;
 }
 
+/** How this computer is used (main.rs Role). */
+export type Role = "personal" | "hub" | "member";
+
+export interface Workspace {
+  role: Role;
+}
+
 export type View = "overview" | "folders" | "computers" | "pending" | "help";

@@ -468,3 +468,18 @@ kbd { display: inline-grid; place-items: center; min-width: 22px; height: 22px; 
 .command { display: flex; align-items: center; gap: 10px; margin-top: 8px; flex-wrap: wrap; }
 .command code { font-size: 12px; background: var(--raised); border: 1px solid var(--border); border-radius: 6px; padding: 6px 9px; color: var(--text); overflow-wrap: anywhere; }
 .setup-error { margin: 0 20px 16px; }
+
+/* Several computers (Fatia 8) */
+.device-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: 12px; padding: 4px 20px 18px; }
+.device-card { border: 1px solid var(--border); border-radius: 12px; padding: 12px 14px; background: var(--raised); display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+.device-top { display: flex; gap: 10px; align-items: center; min-width: 0; }
+.device-folders { font-size: 12.5px; min-height: 2.6em; }
+.device-foot { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.link-btn.danger { color: var(--error); }
+.picker { display: flex; flex-direction: column; gap: 6px; }
+.pick { display: flex; gap: 10px; align-items: flex-start; border: 1px solid var(--border); border-radius: 10px; padding: 8px 10px; cursor: pointer; }
+.pick.on { border-color: color-mix(in srgb, var(--accent, var(--ok)) 55%, var(--border)); background: color-mix(in srgb, var(--accent, var(--ok)) 6%, transparent); }
+.pick input { margin-top: 3px; }
+.picker .inline-link { align-self: flex-start; }
+.role-picker { border: 0; padding: 0; margin: 0; display: flex; flex-direction: column; gap: 6px; }
+.role-picker legend { margin-bottom: 6px; }

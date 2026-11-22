@@ -5,6 +5,8 @@ import { open } from "@tauri-apps/plugin-dialog";
 import type { DeviceView, PreflightReport } from "../types";
 import { warningsFor } from "../lib/preflight";
 import { shortId } from "../lib/format";
+import { validSelection } from "../lib/team";
+import { DevicePicker } from "./Team";
 import { Modal } from "./Modal";
 import { AnimatePresence, motion } from "motion/react";
 import { motionTokens, springs } from "../lib/motion-tokens";
@@ -19,7 +21,8 @@ export function AddFolder({ devices, onClose, onDone }: { devices: DeviceView[];
   const [path, setPath] = useState<string | null>(null);
   const [report, setReport] = useState<PreflightReport | null>(null);
   const [label, setLabel] = useState("");
-  const [peerId, setPeerId] = useState(devices.find((d) => d.connected)?.id ?? devices[0]?.id ?? "");
+  // One computer: preselected. Several: the person chooses who receives it.
+  const [peerIds, setPeerIds] = useState<string[]>(devices.length === 1 ? [devices[0].id] : []);
   const [extras, setExtras] = useState("");
   const [ack, setAck] = useState(false);
   const [busy, setBusy] = useState<string | null>(null);
@@ -45,7 +48,7 @@ export function AddFolder({ devices, onClose, onDone }: { devices: DeviceView[];
 
   const warnings = report ? warningsFor(report) : [];
   const blocking = warnings.some((w) => w.blocking);
-  const canShare = !!path && !!report && !!peerId && label.trim() !== "" && (!blocking || ack) && !busy;
+  const canShare = !!path && !!report && validSelection(peerIds, devices) && label.trim() !== "" && (!blocking || ack) && !busy;
 
   const share = async () => {
     setBusy("Compartilhando…");
@@ -54,7 +57,7 @@ export function AddFolder({ devices, onClose, onDone }: { devices: DeviceView[];
       await invoke<string>("share_folder", {
         path,
         label: label.trim(),
-        peerId,
+        peerIds,
         extraIgnores: extras.split("\n").map((l) => l.trim()).filter(Boolean),
       });
       onDone(label.trim());
@@ -64,14 +67,14 @@ export function AddFolder({ devices, onClose, onDone }: { devices: DeviceView[];
     }
   };
 
-  const peer = devices.find((d) => d.id === peerId);
-  const peerName = peer ? peer.name || shortId(peer.id) : "";
+  const peer = peerIds.length === 1 ? devices.find((d) => d.id === peerIds[0]) : undefined;
+  const peerName = peer ? peer.name || shortId(peer.id) : peerIds.length > 1 ? `${peerIds.length} computadores` : "";
 
   return (
     <Modal title="Adicionar pasta" onClose={onClose}>
       {devices.length === 0 ? (
         <div className="form">
-          <p className="hero-sub">Primeiro conecte o outro computador. Em Computadores, cole o ID dele e aprove o pedido lá.</p>
+          <p className="hero-sub">Primeiro conecte outro computador. Em Computadores, cole o ID dele e aprove o pedido lá.</p>
           <div className="actions">
             <button className="btn" onClick={onClose}>Entendi</button>
           </div>
@@ -79,7 +82,7 @@ export function AddFolder({ devices, onClose, onDone }: { devices: DeviceView[];
       ) : (
         <div className="form">
           <p className="modal-intro">
-            Escolha uma pasta deste computador. O outro recebe um pedido em Pendências e escolhe onde guardar. Nada aqui é apagado ou substituído.
+            Escolha uma pasta deste computador. Cada computador escolhido recebe um pedido em Pendências e escolhe onde guardar. Nada aqui é apagado ou substituído.
           </p>
           <div className="field">
             <span className="field-label">Pasta neste computador</span>
@@ -132,14 +135,10 @@ export function AddFolder({ devices, onClose, onDone }: { devices: DeviceView[];
                 <span className="field-label">Nome da pasta</span>
                 <input value={label} onChange={(e) => setLabel(e.target.value)} />
               </label>
-              <label className="field">
+              <div className="field">
                 <span className="field-label">Compartilhar com</span>
-                <select value={peerId} onChange={(e) => setPeerId(e.target.value)}>
-                  {devices.map((d) => (
-                    <option key={d.id} value={d.id}>{d.name || shortId(d.id)}{d.connected ? "" : " (offline)"}</option>
-                  ))}
-                </select>
-              </label>
+                <DevicePicker devices={devices} selected={peerIds} onChange={setPeerIds} />
+              </div>
               <label className="field">
                 <span className="field-label">Ignorar também (opcional, um padrão por linha)</span>
                 <textarea rows={3} placeholder={"*.psd\nCache/"} value={extras} onChange={(e) => setExtras(e.target.value)} />
