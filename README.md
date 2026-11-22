@@ -107,6 +107,22 @@ Depois disso é só usar: edite, crie e apague arquivos normalmente. Clique numa
 
 <p align="center"><img src="docs/screenshot-connect.jpg" alt="Guia passo a passo para conectar os dois computadores" width="640"></p>
 
+## Acesso por SSH (opcional)
+
+Para abrir um terminal no outro computador de qualquer lugar, os dois precisam do [Tailscale](https://tailscale.com/download) com a mesma conta. Depois, uma vez em cada máquina:
+
+1. **Mac** (Terminal, na pasta do TwinFolders):
+   ```bash
+   ./scripts/ssh-setup-mac.sh
+   ```
+   **Windows** (PowerShell **como administrador**, na pasta do TwinFolders):
+   ```powershell
+   powershell -ExecutionPolicy Bypass -File .\scripts\ssh-setup-windows.ps1
+   ```
+   Cada um cria a chave da máquina (ed25519) e mostra uma linha começando com `ssh-ed25519`.
+2. Rode de novo **passando a linha do outro computador**: no Mac `./scripts/ssh-setup-mac.sh "ssh-ed25519 AAAA… pc"`; no Windows `… ssh-setup-windows.ps1 -OtherKey "ssh-ed25519 AAAA… mac"`. Isso autoriza a chave, **desliga o login por senha**, liga o Login Remoto (Mac) / OpenSSH Server (Windows) e, no Windows, libera a porta 22 **só para endereços do Tailscale**. Desfaça com `--undo` (Mac) ou `-Undo` (Windows).
+3. No app, em **Computadores → Acesso remoto**, confira o usuário do outro computador e clique em **Abrir terminal**.
+
 ## O que já funciona
 
 - **Cliente da API do Syncthing** em Rust, testado contra o Syncthing v2 real.

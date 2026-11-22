@@ -23,8 +23,8 @@ use twinfolders_core::pairing::{self, ShareRequest};
 use twinfolders_core::preflight;
 use twinfolders_core::resolve::{self, ConflictEntry, Outcome};
 use twinfolders_core::service::{self, ServiceConfig};
-use twinfolders_core::stconfig;
 use twinfolders_core::versioning::Choice;
+use twinfolders_core::{stconfig, tailscale};
 
 /// Events that change what the panel shows.
 const WATCHED_EVENTS: &[&str] = &[
@@ -295,6 +295,156 @@ fn get_profile(app: AppHandle) -> Profile {
         os: std::env::consts::OS,
         version: app.package_info().version.to_string(),
     }
+}
+
+/* ---------- remote access (SSH over Tailscale) ---------- */
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct RemoteMachine {
+    device_id: String,
+    name: String,
+    /// MagicDNS name or tailnet IP; `None` when not found in the tailnet.
+    host: Option<String>,
+    online: bool,
+    os: String,
+    /// Account to log in as on that computer (saved, or this account's name).
+    user: String,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct RemoteAccess {
+    /// Plain-language problem with Tailscale here, if any.
+    problem: Option<String>,
+    machines: Vec<RemoteMachine>,
+}
+
+fn remote_file(app: &AppHandle) -> Option<PathBuf> {
+    app.path()
+        .app_config_dir()
+        .ok()
+        .map(|d| d.join("remote.json"))
+}
+
+fn load_users(app: &AppHandle) -> std::collections::BTreeMap<String, String> {
+    remote_file(app)
+        .and_then(|p| std::fs::read_to_string(p).ok())
+        .and_then(|t| serde_json::from_str(&t).ok())
+        .unwrap_or_default()
+}
+
+fn local_user() -> String {
+    std::env::var("USER")
+        .or_else(|_| std::env::var("USERNAME"))
+        .unwrap_or_default()
+}
+
+fn remote_access(c: &SyncthingClient, app: &AppHandle) -> Result<RemoteAccess, String> {
+    let users = load_users(app);
+    let my_id = c.my_id().map_err(|e| e.to_string())?;
+    let conns = c.connections().map_err(|e| e.to_string())?;
+    let (problem, peers) = match tailscale::status() {
+        Ok(s) if s.running() => (None, s.peers),
+        Ok(_) => (
+            Some("o Tailscale está instalado, mas desconectado. Abra o app do Tailscale e entre na sua conta.".into()),
+            Vec::new(),
+        ),
+        Err(e) => (Some(e), Vec::new()),
+    };
+    let machines = c
+        .devices()
+        .map_err(|e| e.to_string())?
+        .into_iter()
+        .filter(|d| d.device_id != my_id)
+        .map(|d| {
+            let live = conns
+                .get(&d.device_id)
+                .map(|x| x.address.clone())
+                .unwrap_or_default();
+            let mut addrs: Vec<&str> = vec![live.as_str()];
+            addrs.extend(d.addresses.iter().map(String::as_str));
+            let peer = tailscale::match_device(&peers, &d.name, &addrs);
+            RemoteMachine {
+                user: users.get(&d.device_id).cloned().unwrap_or_else(local_user),
+                host: peer.and_then(|p| p.host()),
+                online: peer.is_some_and(|p| p.online),
+                os: peer.map(|p| p.os.clone()).unwrap_or_default(),
+                name: d.name,
+                device_id: d.device_id,
+            }
+        })
+        .collect();
+    Ok(RemoteAccess { problem, machines })
+}
+
+#[tauri::command]
+async fn get_remote_access(
+    state: State<'_, Arc<AppState>>,
+    app: AppHandle,
+) -> Result<RemoteAccess, String> {
+    with_client(state.inner(), move |c| remote_access(c, &app)).await
+}
+
+/// Saves which account to use on the other computer.
+#[tauri::command]
+fn set_ssh_user(app: AppHandle, device_id: String, user: String) -> Result<(), String> {
+    let user = user.trim().to_string();
+    if !tailscale::valid_user(&user) {
+        return Err(
+            "nome de usuário inválido: use só letras, números, ponto, _ ou - (sem espaços)".into(),
+        );
+    }
+    let path = remote_file(&app).ok_or("pasta de configuração do app indisponível")?;
+    let mut users = load_users(&app);
+    users.insert(device_id, user);
+    if let Some(dir) = path.parent() {
+        std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
+    }
+    std::fs::write(
+        &path,
+        serde_json::to_string_pretty(&users).map_err(|e| e.to_string())?,
+    )
+    .map_err(|e| e.to_string())
+}
+
+/// Opens the system terminal running `ssh user@host` for a paired computer.
+/// Host and user are resolved here (tailnet + saved settings), never taken
+/// from the UI, and validated before reaching the command line.
+#[tauri::command]
+async fn open_terminal(
+    state: State<'_, Arc<AppState>>,
+    app: AppHandle,
+    device_id: String,
+) -> Result<(), String> {
+    with_client(state.inner(), move |c| {
+        let access = remote_access(c, &app)?;
+        if let Some(p) = access.problem {
+            return Err(p);
+        }
+        let m = access
+            .machines
+            .into_iter()
+            .find(|m| m.device_id == device_id)
+            .ok_or("computador não encontrado")?;
+        let host = m.host.ok_or_else(|| {
+            format!(
+                "{} não aparece no seu Tailscale. Instale e entre com a mesma conta nos dois.",
+                m.name
+            )
+        })?;
+        let target = tailscale::ssh_target(&m.user, &host)?;
+        let (prog, args) = tailscale::terminal_command(&target);
+        let mut child = std::process::Command::new(prog)
+            .args(args)
+            .spawn()
+            .map_err(|e| format!("não foi possível abrir o terminal: {e}"))?;
+        std::thread::spawn(move || {
+            let _ = child.wait();
+        });
+        Ok(())
+    })
+    .await
 }
 
 /// Adds the other computer by its ID (as pasted) and optional address.
@@ -683,6 +833,9 @@ fn main() {
         .invoke_handler(tauri::generate_handler![
             get_overview,
             get_profile,
+            get_remote_access,
+            set_ssh_user,
+            open_terminal,
             approve_device,
             add_device,
             scan_folder,

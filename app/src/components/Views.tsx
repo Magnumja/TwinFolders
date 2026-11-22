@@ -26,6 +26,7 @@ import { Pending } from "./Pending";
 import { useToast } from "./Toasts";
 import { AddDeviceForm, ConnectGuide, IdBlocks } from "./Guide";
 import { pairingStage } from "../lib/pairing";
+import { RemotePanel } from "./Remote";
 import {
   Dot,
   Empty,
@@ -553,6 +554,7 @@ export function ComputersView({ overview, profile, actions }: { overview: Overvi
           </div>
         </section>
       )}
+      {overview.devices.length > 0 && <RemotePanel />}
     </div>
   );
 }

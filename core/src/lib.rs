@@ -13,4 +13,5 @@ pub mod secrets;
 pub mod service;
 pub mod stconfig;
 pub mod stignore;
+pub mod tailscale;
 pub mod versioning;

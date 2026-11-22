@@ -73,6 +73,14 @@ jobs:
       - name: test
         run: cargo test --workspace --exclude twinfolders-app -- --nocapture
 
+      - name: SSH setup scripts (syntax)
+        shell: bash
+        run: |
+          bash -n scripts/ssh-setup-mac.sh
+          if [ "$RUNNER_OS" = "Windows" ]; then
+            powershell -NoProfile -Command '$e=$null; [void][System.Management.Automation.Language.Parser]::ParseFile("scripts/ssh-setup-windows.ps1",[ref]$null,[ref]$e); if ($e.Count) { $e | ForEach-Object { Write-Error $_.Message }; exit 1 } else { "ssh-setup-windows.ps1: OK" }'
+          fi
+
   app:
     name: app (${{ matrix.os }})
     runs-on: ${{ matrix.os }}

@@ -78,6 +78,15 @@ Valores de referência: tarefa `\TwinFolders\Syncthing` (gatilho: logon do usuá
 - ☐ "Versões" numa pasta: troque para "Últimas N versões" (5), salve, reabra e confira que persistiu. No painel web do Syncthing a pasta mostra o mesmo tipo.
 - ☐ (Windows) A notificação aparece na Central de Ações; nome com acento e caminho com espaço resolvem sem erro.
 
+## SSH via Tailscale (Fatia 6)
+
+- ☐ Tailscale instalado e logado nos dois com a mesma conta; `tailscale status` mostra o outro computador.
+- ☐ `powershell -ExecutionPolicy Bypass -File .\scripts\ssh-setup-windows.ps1 (como administrador)` cria a chave e mostra a linha `ssh-ed25519 …`.
+- ☐ Rodar de novo com a chave do outro: termina em "Pronto"; repetir mostra "já estava autorizada".
+- ☐ Do outro computador, `ssh usuario@nome-no-tailscale` entra sem pedir senha; com outra chave (ou `-o PubkeyAuthentication=no`) é recusado (senha desligada).
+- ☐ No app, Computadores → Acesso remoto mostra "Pronto em …" e "Abrir terminal" abre o terminal já conectado.
+- ☐ Desfazer (`--undo` / `-Undo`) volta ao estado anterior.
+
 ## 7. Resultados
 
 | Passo | Resultado | Observações |
@@ -90,3 +99,4 @@ Valores de referência: tarefa `\TwinFolders\Syncthing` (gatilho: logon do usuá
 | 5. Reinício sem abrir o app (+ arquivo do par chega) | NÃO VERIFICADO | |
 | 6. Desinstalar (home e pastas preservados) | NÃO VERIFICADO | |
 | Conflitos e versionamento (Fatia 5) | NÃO VERIFICADO | |
+| SSH via Tailscale (Fatia 6) | NÃO VERIFICADO | |
