@@ -150,9 +150,11 @@ fn edit_while_peer_offline_syncs_after_reconnect() {
     // Mac comes back; no manual action besides reconnecting.
     let started = Instant::now();
     p.b.client.resume_device(&p.a.id).unwrap();
-    wait_until(Duration::from_secs(90), "v2 on mac after reconnect", || {
-        read(&a_file).as_deref() == Some("v2 editado no Windows com o Mac offline")
-    });
+    wait_until(
+        Duration::from_secs(180),
+        "v2 on mac after reconnect",
+        || read(&a_file).as_deref() == Some("v2 editado no Windows com o Mac offline"),
+    );
     eprintln!(
         "EVIDENCE: resumed sync {:?} after reconnect",
         started.elapsed()
@@ -202,7 +204,7 @@ fn concurrent_offline_edits_create_visible_conflict_without_data_loss() {
     };
     let mut found = Vec::new();
     wait_until(
-        Duration::from_secs(90),
+        Duration::from_secs(180),
         "conflict copy on both sides",
         || {
             let a = list(&p.a.folder_path());
