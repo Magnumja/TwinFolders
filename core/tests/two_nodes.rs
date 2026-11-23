@@ -28,7 +28,14 @@ struct Pair {
     a: Node,
     b: Node,
     root: PathBuf,
+    // Last field: dropped after the nodes have stopped.
+    _serial: std::sync::MutexGuard<'static, ()>,
 }
+
+/// One pair at a time: several pairs (two Syncthing daemons each) running
+/// in parallel overloaded the Windows CI runner (connection resets,
+/// timeouts). A panicking test poisons the lock; the next one still runs.
+static SERIAL: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
 impl Drop for Pair {
     fn drop(&mut self) {
@@ -40,6 +47,7 @@ impl Drop for Pair {
 }
 
 fn setup_pair(bin: &str, test: &str) -> Pair {
+    let serial = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
     let root = temp_root(test);
     let a = Node::start(bin, "mac", &root);
     let b = Node::start(bin, "windows", &root);
@@ -73,7 +81,12 @@ fn setup_pair(bin: &str, test: &str) -> Pair {
     wait_until(Duration::from_secs(60), "devices connected", || {
         a.connected_to(&b) && b.connected_to(&a)
     });
-    Pair { a, b, root }
+    Pair {
+        a,
+        b,
+        root,
+        _serial: serial,
+    }
 }
 
 fn wait_idle(n: &Node) {
