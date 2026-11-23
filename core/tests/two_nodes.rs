@@ -267,3 +267,45 @@ fn concurrent_offline_edits_create_visible_conflict_without_data_loss() {
         .is_empty());
     eprintln!("EVIDENCE: conflict resolved (KeepOther) and converged on both sides");
 }
+
+/// Slice 10: the activity log sees a change on this computer as local and
+/// the same change on the other computer as made by this one.
+#[test]
+fn disk_events_record_who_changed_what() {
+    let Some(bin) = require_syncthing() else {
+        return;
+    };
+    let p = setup_pair(&bin, "activity");
+    wait_idle(&p.a);
+    wait_idle(&p.b);
+    fs::write(p.a.folder_path().join("relatorio.txt"), "v1").unwrap();
+    p.a.client.scan(FOLDER_ID).unwrap();
+
+    let entries = |n: &Node| -> Vec<twinfolders_core::activity::Entry> {
+        n.client
+            .events(0, 1, twinfolders_core::activity::EVENT_TYPES)
+            .unwrap_or_default()
+            .iter()
+            .filter_map(twinfolders_core::activity::from_event)
+            .filter(|e| e.path == "relatorio.txt")
+            .collect()
+    };
+    let short_a: String = p.a.id.chars().take(7).collect();
+    wait_until(
+        Duration::from_secs(120),
+        "remote change seen on windows",
+        || {
+            entries(&p.b)
+                .iter()
+                .any(|e| e.by.as_deref() == Some(short_a.as_str()) && e.folder_id == FOLDER_ID)
+        },
+    );
+    let local = entries(&p.a);
+    assert!(
+        // Syncthing reports a brand-new file as "modified" too.
+        local
+            .iter()
+            .any(|e| e.by.is_none() && matches!(e.action.as_str(), "added" | "modified")),
+        "local change on mac: {local:?}"
+    );
+}

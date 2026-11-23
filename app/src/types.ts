@@ -161,4 +161,31 @@ export interface InvitePreview {
   expires: number;
 }
 
-export type View = "overview" | "folders" | "computers" | "pending" | "help";
+export type View = "overview" | "folders" | "computers" | "activity" | "pending" | "help";
+
+/** core::activity::Entry — a change in a synced folder. */
+export interface ActivityEntry {
+  time: string;
+  folderId: string;
+  folderLabel: string;
+  path: string;
+  action: "added" | "modified" | "deleted" | string;
+  kind: string;
+  /** Short device ID of the computer that changed it; absent = this computer. */
+  by?: string;
+}
+
+/** audit::AuditEntry — something done through the app on this computer. */
+export interface AuditEntry {
+  at: number;
+  action: string;
+  detail: string;
+}
+
+/** security::Check */
+export interface SecurityCheck {
+  id: string;
+  ok: boolean | null;
+  title: string;
+  detail: string;
+}

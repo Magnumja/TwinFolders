@@ -93,7 +93,16 @@ Cenário: uma central (Mac da administradora) e vários PCs Windows do time; o u
 | Barra lateral e topo | "Como funciona" entre as seções; avatar repetido no topo | **Ajuda** junto de Preferências; avatar só na barra lateral |
 | Movimento | — | Menu ⋯ comum (`Menu.tsx`, abre do canto com mola rápida); cartões saem com fade e os outros se reorganizam (`popLayout` + `layout`); contagem "3 de 4" e ✓ do copiar trocam com SwapText; aba do diálogo com fundo deslizante (`layoutId`) e troca de conteúdo de 180 ms; convite gerado entra com mola suave; tudo respeita "reduzir movimento" |
 
-Próximas (plano de 2026-11-22): 10 painel de Atividade, 11 blindagem (regras do Tailscale, verificação de criptografia de disco, registro de ações), 12 acesso remoto à tela (RDP no Windows Pro) e implantação.
+## Fatia 10 — Atividade e segurança de uso
+| # | Tarefa | Evidência |
+|---|---|---|
+| ✅ 10.1 | Registro de atividade (`core/src/activity.rs`): eventos de disco do Syncthing (`LocalChangeDetected` / `RemoteChangeDetected`, com `modifiedBy` = quem mudou) viram linhas em `activity.jsonl` (só do dono, no máx. 5000, sem caracteres de controle, sem repetir quando o Syncthing reenvia o buffer). Achado: o Syncthing chama um arquivo novo de `modified`, então a tela diz "alterou" para os dois | 3 unit; integração com 2 Syncthing reais (`two_nodes::disk_events_record_who_changed_what`: a mudança feita no "mac" aparece no "windows" como feita pelo ID curto do mac, e no mac como local) |
+| ✅ 10.2 | Tela **Atividade** (barra lateral, atalho 4): última mudança de cada computador (clique filtra por ele), período (hoje/7/30 dias/tudo), pasta, busca por arquivo, lista agrupada por dia ("14:02 note-ana alterou Projetos / orçamento.xlsx"); aviso de que só pastas sincronizadas aparecem | testes de lógica e de componente; `docs/screenshot-activity.jpg` (dados simulados) |
+| ✅ 10.3 | **Registro de ações neste computador** (aba da Atividade, `audit.jsonl` só do dono, no máx. ~2000): aprovar/desconectar computador, compartilhar/aceitar/parar pasta, mudar com quem compartilha, pausar, versões, conflito resolvido, convite criado/cancelado, entrou no time, papel alterado. Não é à prova de quem é dono da conta, e o texto diz isso no código | unit (ordem, limpeza, limite, permissão) |
+| ✅ 10.4 | **Segurança deste computador** (Preferências): FileVault/BitLocker (lido sem admin: `fdesetup status`; propriedade de volume do Windows), painel do Syncthing só local, painel com senha e HTTPS, Tailscale. Cada item diz o que fazer; o que não dá para ler aparece como "?" em vez de chute | unit; FileVault lido de verdade aqui ("On"); `docs/screenshot-security.jpg` |
+| ✅ 10.5 | Modelo de regras do Tailscale para o escritório (`docs/tailscale-escritorio.md`): `tag:escritorio`, a central alcança o time (sync, SSH, RDP), o time só alcança a central na sincronização, notebooks não se enxergam, com `tests` que o Tailscale confere ao salvar; passo a passo para computador perdido | revisão. Aplicar numa rede real 🖐 |
+
+Próximas (plano de 2026-11-22): 11 acesso remoto à tela (RDP no Windows Pro) e implantação na cliente.
 
 ## Paralelismo previsto
 - 0.2 e 1.2/1.3/1.4 em agentes paralelos (lógica pura, independentes).

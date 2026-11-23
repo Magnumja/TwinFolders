@@ -13,6 +13,7 @@ import { VersioningEditor } from "./components/VersioningEditor";
 import { Preferences, Sidebar, Topbar, VIEW_KEYS } from "./components/Shell";
 import { ComputersView, FoldersView, OverviewView, PendingView, type Actions } from "./components/Views";
 import { HelpView } from "./components/Guide";
+import { ActivityView } from "./components/Activity";
 import { SetupView } from "./components/Setup";
 import { RoleContext, ShareEditor } from "./components/Team";
 import { WorkspaceContext } from "./components/Invite";
@@ -209,6 +210,7 @@ function AppShell() {
               {overview && view === "overview" && <OverviewView overview={overview} profile={profile} conflicts={conflicts} actions={actions} />}
               {overview && view === "folders" && <FoldersView overview={overview} actions={actions} />}
               {overview && view === "computers" && <ComputersView overview={overview} profile={profile} actions={actions} />}
+              {overview && view === "activity" && <ActivityView overview={overview} />}
               {overview && view === "pending" && <PendingView overview={overview} conflicts={conflicts} actions={actions} />}
               {view === "help" && <HelpView go={setView} />}
             </motion.div>

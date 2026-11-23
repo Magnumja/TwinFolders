@@ -1,5 +1,6 @@
 //! TwinFolders core: Syncthing REST client and cross-platform helpers.
 
+pub mod activity;
 pub mod client;
 pub mod conflict;
 pub mod guitls;

@@ -117,6 +117,15 @@ Valores de referência: label `dev.twinfolders.syncthing`; plist `~/Library/Laun
 - ☐ Usar o mesmo convite num terceiro computador: o pedido aparece como "Convite vencido ou já usado".
 - ☐ Computador do time tenta aprovar/aceitar algo de outro computador: o app recusa com a mensagem da central.
 
+## Atividade e segurança (Fatia 10) — NÃO VERIFICADO
+
+- ☐ Mudar um arquivo numa pasta sincronizada no outro computador: aparece em Atividade com o nome dele, "alterou" e o caminho, em poucos segundos.
+- ☐ Apagar um arquivo aqui: aparece como "apagou" com o nome deste computador.
+- ☐ Clicar no cartão de um computador filtra só as mudanças dele; Hoje / 7 dias / 30 dias mudam a lista.
+- ☐ Aprovar ou desconectar um computador aparece em "Ações neste computador".
+- ☐ Preferências → Segurança: o item do disco bate com o estado real do FileVault/BitLocker; com o serviço desligado, os itens do painel ficam como "?".
+- ☐ Regras do Tailscale de docs/tailscale-escritorio.md: um notebook do time não alcança outro (`tailscale ping`), mas alcança a central.
+
 ## 7. Resultados
 
 | Passo | Resultado | Observações |

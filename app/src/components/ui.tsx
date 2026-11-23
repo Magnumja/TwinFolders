@@ -90,4 +90,5 @@ export const IconSwap = ({ size = 22 }: IconProps) => svg(size, <path d="M4 9h14
 export const IconCopy = ({ size = 14 }: IconProps) => svg(size, <><rect x="8" y="8" width="12" height="12" rx="2" /><path d="M16 8V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h2" /></>);
 export const IconLock = ({ size = 14 }: IconProps) => svg(size, <><rect x="5" y="11" width="14" height="9" rx="2" /><path d="M8 11V8a4 4 0 0 1 8 0v3" /></>);
 export const IconHelp = ({ size = 18 }: IconProps) => svg(size, <><circle cx="12" cy="12" r="8.5" /><path d="M9.6 9.4a2.5 2.5 0 0 1 4.8.9c0 1.7-2.4 2.2-2.4 3.7M12 17h.01" /></>);
+export const IconPulse = ({ size = 18 }: IconProps) => svg(size, <path d="M3 12h4l2.5-6 5 12 2.5-6h4" />);
 export const IconAlert = ({ size = 18 }: IconProps) => svg(size, <><path d="M12 4 2.5 20h19z" /><path d="M12 10v4M12 17h.01" /></>);

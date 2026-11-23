@@ -8,16 +8,18 @@ import { springs } from "../lib/motion-tokens";
 import { useSafeMotion } from "../hooks/useSafeMotion";
 import { linkState } from "./Views";
 import { Modal } from "./Modal";
-import { IconFolder, IconGear, IconGrid, IconHelp, IconInbox, IconMonitor, IconRefresh, IconShield, SwapText } from "./ui";
+import { IconFolder, IconGear, IconGrid, IconHelp, IconInbox, IconMonitor, IconPulse, IconRefresh, IconShield, SwapText } from "./ui";
 import type { Role } from "../types";
 import { RolePicker } from "./Team";
+import { SecurityChecklist } from "./Activity";
 
-export const VIEW_KEYS: View[] = ["overview", "folders", "computers", "pending", "help"];
+export const VIEW_KEYS: View[] = ["overview", "folders", "computers", "activity", "pending", "help"];
 
 export const VIEW_TITLE: Record<View, string> = {
   overview: "Visão geral",
   folders: "Pastas",
   computers: "Computadores",
+  activity: "Atividade",
   pending: "Pendências",
   help: "Ajuda",
 };
@@ -92,6 +94,7 @@ export function Sidebar({
           <NavItem view="overview" current={view} icon={<IconGrid />} onSelect={onSelect} />
           <NavItem view="folders" current={view} icon={<IconFolder />} count={overview?.folders.length} onSelect={onSelect} />
           <NavItem view="computers" current={view} icon={<IconMonitor />} count={overview?.devices.length} onSelect={onSelect} />
+          <NavItem view="activity" current={view} icon={<IconPulse />} onSelect={onSelect} />
           <NavItem view="pending" current={view} icon={<IconInbox />} count={pending} alert onSelect={onSelect} />
         </ul>
       </nav>
@@ -179,6 +182,7 @@ export function Preferences({ role, onRole, onClose }: { role: Role; onRole: (r:
           <input type="checkbox" className="switch" checked={!!autostart} disabled={autostart === null} onChange={toggle} />
         </label>
         <RolePicker role={role} onChange={onRole} />
+        <SecurityChecklist />
         <div className="actions">
           <button className="btn" onClick={onClose}>Fechar</button>
         </div>

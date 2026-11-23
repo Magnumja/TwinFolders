@@ -6,7 +6,9 @@
 
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod audit;
 mod office;
+mod security;
 
 use std::collections::BTreeSet;
 use std::path::PathBuf;
@@ -27,7 +29,7 @@ use twinfolders_core::preflight;
 use twinfolders_core::resolve::{self, ConflictEntry, Outcome};
 use twinfolders_core::service::{self, ServiceConfig};
 use twinfolders_core::versioning::Choice;
-use twinfolders_core::{invite, setup, stconfig, tailscale};
+use twinfolders_core::{activity, invite, setup, stconfig, tailscale};
 
 /// Events that change what the panel shows.
 const WATCHED_EVENTS: &[&str] = &[
@@ -74,6 +76,13 @@ impl AppState {
         lock(&self.config_dir)
             .clone()
             .ok_or_else(|| "pasta de configuração indisponível".into())
+    }
+
+    /// Records an action done through the app (best effort).
+    fn audit(&self, action: &str, detail: &str) {
+        if let Ok(dir) = self.dir() {
+            audit::record(&dir, office::now(), action, detail);
+        }
     }
 
     fn workspace(&self) -> Workspace {
@@ -583,6 +592,7 @@ async fn approve_device(
     device_id: String,
     name: String,
 ) -> Result<(), String> {
+    let note = format!("{} ({})", invite::parse_tag(&name).0, short(&device_id));
     let ws = state.workspace();
     office::member_guard(&ws, &[&device_id])?;
     let dir = state.dir()?;
@@ -630,6 +640,7 @@ async fn approve_device(
         Ok(())
     })
     .await
+    .inspect(|_| state.audit("Computador aprovado", &note))
 }
 
 /// Pre-share check of a local folder (Windows-invalid names, case
@@ -652,6 +663,7 @@ async fn share_folder(
     peer_ids: Vec<String>,
     extra_ignores: Vec<String>,
 ) -> Result<String, String> {
+    let note = format!("\"{label}\" com {} computador(es)", peer_ids.len());
     let refs: Vec<&str> = peer_ids.iter().map(String::as_str).collect();
     office::member_guard(&state.workspace(), &refs)?;
     with_client(state.inner(), move |c| {
@@ -680,6 +692,7 @@ async fn share_folder(
         Ok(id)
     })
     .await
+    .inspect(|_| state.audit("Pasta compartilhada", &note))
 }
 
 /// Sets which paired computers a folder is shared with.
@@ -689,6 +702,7 @@ async fn set_folder_peers(
     folder_id: String,
     peer_ids: Vec<String>,
 ) -> Result<(), String> {
+    let note = format!("{folder_id}: agora com {} computador(es)", peer_ids.len());
     let refs: Vec<&str> = peer_ids.iter().map(String::as_str).collect();
     office::member_guard(&state.workspace(), &refs)?;
     with_client(state.inner(), move |c| {
@@ -697,12 +711,14 @@ async fn set_folder_peers(
         pairing::set_folder_peers(c, &folder_id, &local_id, &peers).map_err(|e| e.to_string())
     })
     .await
+    .inspect(|_| state.audit("Compartilhamento alterado", &note))
 }
 
 /// Disconnects a computer: unshares every folder with it and removes it.
 /// Its files stay where they are.
 #[tauri::command]
 async fn remove_device(state: State<'_, Arc<AppState>>, device_id: String) -> Result<(), String> {
+    let note = short(&device_id);
     if state.workspace().role == Role::Member {
         return Err("num computador do time, só a central desconecta computadores".into());
     }
@@ -710,6 +726,7 @@ async fn remove_device(state: State<'_, Arc<AppState>>, device_id: String) -> Re
         pairing::remove_device(c, &device_id).map_err(|e| e.to_string())
     })
     .await
+    .inspect(|_| state.audit("Computador desconectado", &note))
 }
 
 /* ---------- role of this computer and office invites ---------- */
@@ -730,7 +747,9 @@ fn set_role(state: State<'_, Arc<AppState>>, role: Role) -> Result<(), String> {
         ws.hub_name = None;
         ws.joining = None;
     }
-    office::write_workspace(&dir, &ws)
+    office::write_workspace(&dir, &ws)?;
+    state.audit("Papel alterado", &format!("{role:?}"));
+    Ok(())
 }
 
 /// This computer's name as the other side sees it.
@@ -767,6 +786,7 @@ async fn create_invite(
     state: State<'_, Arc<AppState>>,
     folders: Vec<String>,
 ) -> Result<String, String> {
+    let note = format!("{} pasta(s) oferecida(s)", folders.len());
     let dir = state.dir()?;
     with_client(state.inner(), move |c| {
         let my_id = c.my_id().map_err(|e| e.to_string())?;
@@ -811,6 +831,7 @@ async fn create_invite(
         Ok(inv.encode())
     })
     .await
+    .inspect(|_| state.audit("Convite criado", &note))
 }
 
 #[tauri::command]
@@ -855,7 +876,9 @@ fn cancel_invite(state: State<'_, Arc<AppState>>, code: String) -> Result<(), St
         .into_iter()
         .filter(|r| r.code != code)
         .collect();
-    office::write_invites(&dir, &list)
+    office::write_invites(&dir, &list)?;
+    state.audit("Convite cancelado", &code);
+    Ok(())
 }
 
 #[derive(Serialize)]
@@ -926,6 +949,7 @@ async fn join_with_invite(state: State<'_, Arc<AppState>>, text: String) -> Resu
         Ok(inv.name)
     })
     .await
+    .inspect(|r| state.audit("Entrou no time", &format!("central {r}")))
 }
 
 /// Once the central approved this team computer (it is connected), put
@@ -953,6 +977,7 @@ async fn accept_folder(
     label: String,
     path: String,
 ) -> Result<(), String> {
+    let note = format!("\"{label}\" de {}", short(&offered_by));
     office::member_guard(&state.workspace(), &[&offered_by])?;
     with_client(state.inner(), move |c| {
         let local_id = c.my_id().map_err(|e| e.to_string())?;
@@ -967,15 +992,18 @@ async fn accept_folder(
             .map_err(|e| e.to_string())
     })
     .await
+    .inspect(|_| state.audit("Pasta aceita", &note))
 }
 
 /// Stops syncing a folder. Files on disk are kept.
 #[tauri::command]
 async fn remove_folder(state: State<'_, Arc<AppState>>, folder_id: String) -> Result<(), String> {
+    let note = folder_id.clone();
     with_client(state.inner(), move |c| {
         c.remove_folder(&folder_id).map_err(|e| e.to_string())
     })
     .await
+    .inspect(|_| state.audit("Parou de sincronizar", &note))
 }
 
 /// Pauses or resumes syncing one folder.
@@ -985,11 +1013,22 @@ async fn set_folder_paused(
     folder_id: String,
     paused: bool,
 ) -> Result<(), String> {
+    let note = folder_id.clone();
     with_client(state.inner(), move |c| {
         c.set_folder_paused(&folder_id, paused)
             .map_err(|e| e.to_string())
     })
     .await
+    .inspect(|_| {
+        state.audit(
+            if paused {
+                "Pasta pausada"
+            } else {
+                "Pasta retomada"
+            },
+            &note,
+        )
+    })
 }
 
 /// Opens a synced folder in Finder / Explorer. The path comes from
@@ -1077,6 +1116,7 @@ async fn resolve_conflict(
     resolution: Resolution,
     tag: String,
 ) -> Result<Outcome, String> {
+    let note = format!("{folder_id}: {conflict_path}");
     with_client(state.inner(), move |c| {
         let root = folder_root(c, &folder_id)?;
         let out =
@@ -1086,6 +1126,7 @@ async fn resolve_conflict(
         Ok(out)
     })
     .await
+    .inspect(|_| state.audit("Conflito resolvido", &note))
 }
 
 #[tauri::command]
@@ -1109,6 +1150,7 @@ async fn set_versioning(
     folder_id: String,
     choice: Choice,
 ) -> Result<(), String> {
+    let note = folder_id.clone();
     with_client(state.inner(), move |c| {
         let cur = c.folder(&folder_id).map_err(|e| e.to_string())?.versioning;
         // A type configured outside the app (e.g. external) is shown
@@ -1123,6 +1165,7 @@ async fn set_versioning(
             .map_err(|e| e.to_string())
     })
     .await
+    .inspect(|_| state.audit("Versionamento alterado", &note))
 }
 
 /// Periodically looks for new conflict copies; notifies once per conflict
@@ -1190,6 +1233,96 @@ fn watch_conflicts(app: AppHandle, st: Arc<AppState>) {
 /// restarts: on error it reconnects and restarts from event 0. A restart that
 /// does not break the connection would leave `since` ahead of the new IDs
 /// until they catch up; the UI's 3 s poll covers that gap.
+fn short(id: &str) -> String {
+    id.chars().take(7).collect()
+}
+
+/* ---------- activity, action log and security checks ---------- */
+
+/// Newest first, at most `limit`.
+#[tauri::command]
+fn get_activity(
+    state: State<'_, Arc<AppState>>,
+    limit: usize,
+) -> Result<Vec<activity::Entry>, String> {
+    let dir = state.dir()?;
+    let mut all = activity::read(&dir.join("activity.jsonl"));
+    all.reverse();
+    all.truncate(limit.clamp(1, activity::KEEP));
+    Ok(all)
+}
+
+#[tauri::command]
+fn get_audit(state: State<'_, Arc<AppState>>) -> Result<Vec<audit::AuditEntry>, String> {
+    let mut all = audit::read(&state.dir()?);
+    all.reverse();
+    Ok(all)
+}
+
+#[tauri::command]
+async fn get_security() -> Result<Vec<security::Check>, String> {
+    tauri::async_runtime::spawn_blocking(|| {
+        let gui = home()
+            .ok()
+            .and_then(|(h, _)| std::fs::read_to_string(h.join("config.xml")).ok())
+            .and_then(|xml| stconfig::read_gui(&xml).ok());
+        security::build(&security::Inputs {
+            os: std::env::consts::OS,
+            disk_encrypted: security::disk_encrypted(),
+            gui_loopback: gui.as_ref().map(|g| security::is_loopback(&g.address)),
+            gui_protected: gui
+                .as_ref()
+                .map(|g| g.tls && g.has_password && !g.user.is_empty()),
+            tailscale_running: match tailscale::status() {
+                Ok(s) => Some(s.running()),
+                Err(e) if e.contains("não está conectado") => Some(false),
+                Err(_) => None,
+            },
+        })
+    })
+    .await
+    .map_err(|e| e.to_string())
+}
+
+/// Keeps the activity log: Syncthing's disk events (changes in synced
+/// folders, here and on the other computers) appended to activity.jsonl.
+/// On (re)connect it replays Syncthing's buffer; duplicates are skipped.
+fn watch_activity(app: AppHandle, st: Arc<AppState>) {
+    std::thread::spawn(move || {
+        let Ok(dir) = st.dir() else { return };
+        let path = dir.join("activity.jsonl");
+        let mut seen: std::collections::HashSet<String> = activity::read(&path)
+            .iter()
+            .map(activity::Entry::key)
+            .collect();
+        loop {
+            let Ok(client) = connect() else {
+                std::thread::sleep(Duration::from_secs(5));
+                continue;
+            };
+            let mut since = 0;
+            loop {
+                match client.events(since, 50, activity::EVENT_TYPES) {
+                    Ok(evs) => {
+                        if let Some(last) = evs.last() {
+                            since = last.id;
+                        }
+                        let entries: Vec<activity::Entry> =
+                            evs.iter().filter_map(activity::from_event).collect();
+                        if matches!(activity::append(&path, &entries, &mut seen), Ok(n) if n > 0) {
+                            let _ = app.emit("activity-changed", ());
+                        }
+                    }
+                    Err(_) => {
+                        std::thread::sleep(Duration::from_secs(3));
+                        break;
+                    }
+                }
+            }
+        }
+    });
+}
+
 fn watch_events(app: AppHandle) {
     std::thread::spawn(move || {
         let mut since: u64 = 0;
@@ -1265,6 +1398,9 @@ fn main() {
             cancel_invite,
             read_invite,
             join_with_invite,
+            get_activity,
+            get_audit,
+            get_security,
             accept_folder,
             remove_folder,
             set_folder_paused,
@@ -1312,6 +1448,7 @@ fn main() {
             }
             watch_events(app.handle().clone());
             watch_conflicts(app.handle().clone(), state.clone());
+            watch_activity(app.handle().clone(), state.clone());
             Ok(())
         })
         .on_window_event(|w, e| {
