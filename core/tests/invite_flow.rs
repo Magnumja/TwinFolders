@@ -1,9 +1,9 @@
 //! Slice 9: the office invite against two live Syncthing daemons.
 //!
 //! The central creates an invite; the team computer decodes it, tags its
-//! own name with the code and adds the central. The central must see the
-//! pending request carrying that code (that is how it recognises an
-//! invited computer), approve it with the clean name, and after the
+//! own name with a proof of the code (bound to its device ID) and adds the
+//! central. The central must see the pending request carrying that proof
+//! and verify it (that is how it recognises an invited computer), approve it with the clean name, and after the
 //! connection the team computer restores its real name.
 
 mod common;
@@ -38,7 +38,7 @@ fn invited_computer_is_recognised_by_its_code() {
     let inv = invite::Invite::decode(&text, 1_001).unwrap();
     assert_eq!(inv.hub, hub.id);
     note.client
-        .set_device_name(&note.id, &invite::tag_name("note-ana", &inv.code))
+        .set_device_name(&note.id, &invite::tag_name("note-ana", &inv.code, &note.id))
         .unwrap();
     note.client
         .add_device(&inv.hub, &inv.name, &[inv.addrs[0].as_str()])
@@ -51,12 +51,12 @@ fn invited_computer_is_recognised_by_its_code() {
         pending.iter().any(|p| p.device_id == note.id)
     });
     let req = pending.iter().find(|p| p.device_id == note.id).unwrap();
-    let (clean, got) = invite::parse_tag(&req.name);
+    let (clean, proof) = invite::parse_tag(&req.name);
+    let proof = proof.unwrap_or_else(|| panic!("no proof in {:?}", req.name));
+    assert!(!req.name.contains(&code), "the code itself is never sent");
     assert_eq!(
-        got.as_deref(),
-        Some(code.as_str()),
-        "name was {:?}",
-        req.name
+        invite::match_code(&[&code], &note.id, &proof),
+        Some(code.as_str())
     );
     assert_eq!(clean, "note-ana");
 

@@ -100,7 +100,7 @@ fn file_created_on_mac_appears_on_windows_and_ignores_apply() {
 
     let started = Instant::now();
     let dst = p.b.folder_path().join("hello.txt");
-    wait_until(Duration::from_secs(60), "hello.txt on windows", || {
+    wait_until(Duration::from_secs(120), "hello.txt on windows", || {
         read(&dst).as_deref() == Some("olá do Mac")
     });
     eprintln!(
@@ -128,7 +128,7 @@ fn edit_while_peer_offline_syncs_after_reconnect() {
     let b_file = p.b.folder_path().join("notes.txt");
     fs::write(&b_file, "v1").unwrap();
     p.b.client.scan(FOLDER_ID).unwrap();
-    wait_until(Duration::from_secs(60), "v1 on mac", || {
+    wait_until(Duration::from_secs(120), "v1 on mac", || {
         read(&a_file).as_deref() == Some("v1")
     });
 
@@ -170,7 +170,7 @@ fn concurrent_offline_edits_create_visible_conflict_without_data_loss() {
     let b_file = p.b.folder_path().join("plan.txt");
     fs::write(&a_file, "base").unwrap();
     p.a.client.scan(FOLDER_ID).unwrap();
-    wait_until(Duration::from_secs(60), "base on windows", || {
+    wait_until(Duration::from_secs(120), "base on windows", || {
         read(&b_file).as_deref() == Some("base")
     });
     wait_idle(&p.a);

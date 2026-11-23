@@ -3,7 +3,7 @@ import { expiresIn, looksLikeInvite, parseInviteTag } from "./invite";
 
 describe("invite helpers", () => {
   it("splits the invite tag from a waiting computer's name", () => {
-    expect(parseInviteTag("note-ana [tf:K7Q2-9XPM]")).toEqual({ name: "note-ana", code: "K7Q2-9XPM" });
+    expect(parseInviteTag("note-ana [tf:QW3E-RT5Y]")).toEqual({ name: "note-ana", code: "QW3E-RT5Y" });
     expect(parseInviteTag("note-ana")).toEqual({ name: "note-ana", code: null });
     expect(parseInviteTag("x [tf:K7Q2-9XP0]")).toEqual({ name: "x [tf:K7Q2-9XP0]", code: null });
   });

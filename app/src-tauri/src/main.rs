@@ -589,7 +589,7 @@ async fn approve_device(
     with_client(state.inner(), move |c| {
         // An invited computer shows `name [tf:CODE]`: save the clean name,
         // use up the invite and offer the folders chosen for it.
-        let (clean, code) = invite::parse_tag(&name);
+        let (clean, proof) = invite::parse_tag(&name);
         let pending = PendingDevice {
             device_id: device_id.clone(),
             name: clean,
@@ -597,9 +597,13 @@ async fn approve_device(
             time: String::new(),
         };
         pairing::approve_device(c, &pending, None).map_err(|e| e.to_string())?;
-        let Some(code) = code else { return Ok(()) };
+        let Some(proof) = proof else { return Ok(()) };
         let mut list = office::read_invites(&dir);
         let now = office::now();
+        let codes = office::open_codes(&list, now);
+        let Some(code) = invite::match_code(&codes, &device_id, &proof).map(str::to_string) else {
+            return Ok(());
+        };
         let Some(folders) = office::open_invite(&list, &code, now).map(|r| r.folders.clone())
         else {
             return Ok(());
@@ -806,14 +810,21 @@ async fn list_invites(state: State<'_, Arc<AppState>>) -> Result<Invites, String
     with_client(state.inner(), move |c| {
         let now = office::now();
         let list = office::read_invites(&dir);
+        let codes = office::open_codes(&list, now);
         let mut matches = std::collections::BTreeMap::new();
         for p in c.pending_devices().map_err(|e| e.to_string())? {
-            if let (_, Some(code)) = invite::parse_tag(&p.name) {
-                if office::open_invite(&list, &code, now).is_some() {
-                    matches.insert(p.device_id, code);
+            if let (_, Some(proof)) = invite::parse_tag(&p.name) {
+                if let Some(code) = invite::match_code(&codes, &p.device_id, &proof) {
+                    matches.insert(p.device_id, code.to_string());
                 }
             }
         }
+        // Two requests claiming the same invite: mark neither as invited.
+        let mut seen = std::collections::BTreeMap::<String, usize>::new();
+        for code in matches.values() {
+            *seen.entry(code.clone()).or_default() += 1;
+        }
+        matches.retain(|_, code| seen.get(code) == Some(&1));
         let open = list
             .iter()
             .filter(|r| r.used_by.is_none() && now < r.expires)
@@ -877,7 +888,7 @@ async fn join_with_invite(state: State<'_, Arc<AppState>>, text: String) -> Resu
             Some(j) => j.original_name.clone(),
             None => my_device_name(c, &my_id),
         };
-        c.set_device_name(&my_id, &invite::tag_name(&original, &inv.code))
+        c.set_device_name(&my_id, &invite::tag_name(&original, &inv.code, &my_id))
             .map_err(|e| e.to_string())?;
         let addr = inv.addrs.first().cloned().unwrap_or_default();
         if !c

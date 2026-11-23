@@ -9,6 +9,7 @@ description = "Syncthing client and cross-platform utilities for TwinFolders"
 [dependencies]
 getrandom = "0.4.3"
 keyring = "4.2.0"
+ring = "0.17.14"
 rcgen = { version = "0.14.10", default-features = false, features = ["ring", "pem"] }
 roxmltree = "0.21.2"
 serde = { version = "1.0.229", features = ["derive"] }

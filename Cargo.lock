@@ -5046,6 +5046,7 @@ dependencies = [
  "libc",
  "mockito",
  "rcgen",
+ "ring",
  "roxmltree",
  "serde",
  "serde_json",

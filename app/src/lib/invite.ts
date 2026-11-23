@@ -1,6 +1,6 @@
-/** Splits `note-ana [tf:K7Q2-9XPM]` (an invited computer waiting) into name and code. */
+/** Splits `note-ana [tf:ABCD-EFGH]` (an invited computer waiting, with its proof) into name and proof. */
 export function parseInviteTag(name: string): { name: string; code: string | null } {
-  const m = /^(.*) \[tf:([A-HJ-NP-Z2-9]{4}-[A-HJ-NP-Z2-9]{4})\]$/.exec(name);
+  const m = /^(.*) \[tf:([A-Z2-7]{4}-[A-Z2-7]{4})\]$/.exec(name);
   return m ? { name: m[1].trim(), code: m[2] } : { name, code: null };
 }
 

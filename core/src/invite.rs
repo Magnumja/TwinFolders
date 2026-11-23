@@ -3,10 +3,13 @@
 //! The central computer creates an invite: its device ID, name, optional
 //! Tailscale address and a one-time code, valid for a limited time. The
 //! team computer pastes it, adds the central and connects. While waiting
-//! for approval it advertises its own name with the code (`note-ana
-//! [tf:K7Q2-9XPM]`), so the central can tell an invited computer from an
-//! unknown one: only someone holding the invite text knows the code.
-//! Approval on the central stays an explicit click.
+//! for approval it advertises a *proof* in its name (`note-ana
+//! [tf:ABCD-EFGH]`): an HMAC of its own device ID keyed with the code.
+//! The central recomputes it for each pending request, so it can tell an
+//! invited computer from an unknown one. The proof never reveals the code
+//! (Syncthing sends the name to anyone who connects) and is bound to that
+//! one device ID, so overhearing it does not let another computer reuse
+//! it. Approval on the central stays an explicit click.
 //!
 //! The text is `twinfolders-convite:` + base32 of a small JSON object, so
 //! it survives being pasted into chat apps and e-mail.
@@ -134,24 +137,64 @@ impl Invite {
     }
 }
 
-/// Name a joining computer advertises while waiting: `note-ana [tf:CODE]`.
-pub fn tag_name(name: &str, code: &str) -> String {
-    let base: String = clean_name(name).chars().take(40).collect();
-    format!("{} [tf:{code}]", base.trim())
+/// Proof that the computer with `device_id` holds the invite `code`:
+/// HMAC-SHA256(code, device_id), first 40 bits as `XXXX-XXXX` (base32).
+pub fn proof(code: &str, device_id: &str) -> String {
+    let key = ring::hmac::Key::new(ring::hmac::HMAC_SHA256, code.as_bytes());
+    let tag = ring::hmac::sign(&key, device_id.as_bytes());
+    let s = base32_encode(&tag.as_ref()[..5]);
+    format!("{}-{}", &s[..4], &s[4..8])
 }
 
-/// Splits `note-ana [tf:CODE]` into (`note-ana`, `CODE`). Names without a
-/// well-formed tag come back unchanged with no code.
+fn valid_proof(p: &str) -> bool {
+    let b = p.as_bytes();
+    b.len() == 9 && b[4] == b'-' && b.iter().enumerate().all(|(i, x)| i == 4 || B32.contains(x))
+}
+
+/// Constant-time check of a proof a pending computer advertised.
+pub fn proof_matches(code: &str, device_id: &str, advertised: &str) -> bool {
+    let key = ring::hmac::Key::new(ring::hmac::HMAC_SHA256, code.as_bytes());
+    let tag = ring::hmac::sign(&key, device_id.as_bytes());
+    let expected = base32_encode(&tag.as_ref()[..5]);
+    let got: String = advertised.chars().filter(|c| *c != '-').collect();
+    expected.len() == got.len()
+        && expected
+            .bytes()
+            .zip(got.bytes())
+            .fold(0u8, |acc, (a, b)| acc | (a ^ b))
+            == 0
+}
+
+/// Name a joining computer advertises while waiting: `note-ana [tf:PROOF]`.
+pub fn tag_name(name: &str, code: &str, my_device_id: &str) -> String {
+    let base: String = clean_name(name).chars().take(40).collect();
+    format!("{} [tf:{}]", base.trim(), proof(code, my_device_id))
+}
+
+/// Splits `note-ana [tf:PROOF]` into (`note-ana`, `PROOF`). Names without
+/// a well-formed tag come back unchanged with no proof.
 pub fn parse_tag(name: &str) -> (String, Option<String>) {
     if let Some(start) = name.rfind(" [tf:") {
         let rest = &name[start + 5..];
-        if let Some(code) = rest.strip_suffix(']') {
-            if valid_code(code) {
-                return (name[..start].trim().to_string(), Some(code.to_string()));
+        if let Some(p) = rest.strip_suffix(']') {
+            if valid_proof(p) {
+                return (name[..start].trim().to_string(), Some(p.to_string()));
             }
         }
     }
     (name.to_string(), None)
+}
+
+/// Which of `codes` the pending computer `device_id` proves to hold, if
+/// exactly one does.
+pub fn match_code<'a>(codes: &[&'a str], device_id: &str, advertised: &str) -> Option<&'a str> {
+    let mut hits = codes
+        .iter()
+        .filter(|c| proof_matches(c, device_id, advertised));
+    match (hits.next(), hits.next()) {
+        (Some(c), None) => Some(c),
+        _ => None,
+    }
 }
 
 // RFC 4648 base32, no padding.
@@ -261,12 +304,31 @@ mod tests {
     }
 
     #[test]
-    fn name_tag_roundtrip() {
-        let t = tag_name("note-ana", "K7Q2-9XPM");
-        assert_eq!(t, "note-ana [tf:K7Q2-9XPM]");
-        assert_eq!(parse_tag(&t), ("note-ana".into(), Some("K7Q2-9XPM".into())));
+    fn name_tag_carries_a_proof_bound_to_the_device_not_the_code() {
+        let me = hub();
+        let t = tag_name("note-ana", "K7Q2-9XPM", &me);
+        assert!(!t.contains("K7Q2-9XPM"), "the code itself never leaves");
+        let (clean, p) = parse_tag(&t);
+        assert_eq!(clean, "note-ana");
+        let p = p.unwrap();
+        assert!(proof_matches("K7Q2-9XPM", &me, &p));
+        // An overheard proof is useless from another device or code.
+        assert!(!proof_matches("K7Q2-9XPM", "OTHERDEVICE", &p));
+        assert!(!proof_matches("AAAA-BBBB", &me, &p));
         assert_eq!(parse_tag("note-ana"), ("note-ana".into(), None));
         assert_eq!(parse_tag("x [tf:nope]"), ("x [tf:nope]".into(), None));
-        assert!(tag_name("a\u{7}b", "K7Q2-9XPM").starts_with("ab "));
+        assert!(tag_name("a\u{7}b", "K7Q2-9XPM", &me).starts_with("ab "));
+    }
+
+    #[test]
+    fn match_code_needs_exactly_one_invite() {
+        let me = hub();
+        let p = proof("K7Q2-9XPM", &me);
+        assert_eq!(
+            match_code(&["AAAA-BBBB", "K7Q2-9XPM"], &me, &p),
+            Some("K7Q2-9XPM")
+        );
+        assert_eq!(match_code(&["AAAA-BBBB"], &me, &p), None);
+        assert_eq!(match_code(&["K7Q2-9XPM", "K7Q2-9XPM"], &me, &p), None);
     }
 }

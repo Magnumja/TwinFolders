@@ -15,7 +15,7 @@ const overview = {
   myId: "ME", myName: "mac-ana", devices: [],
   folders: [{ id: "proj", label: "Projetos", path: "/x", health: { kind: "upToDate" }, needBytes: 0, globalBytes: 0, lastSync: null, peers: [] }],
   pendingDevices: [
-    { deviceId: "NOTE1AA-B", name: "note-ana [tf:K7Q2-9XPM]", address: "tcp://100.64.0.2:22001", time: "" },
+    { deviceId: "NOTE1AA-B", name: "note-ana [tf:QW3E-RT5Y]", address: "tcp://100.64.0.2:22001", time: "" },
     { deviceId: "STRANGE-B", name: "pc-estranho", address: "", time: "" },
   ],
   pendingFolders: [],
