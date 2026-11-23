@@ -49,6 +49,9 @@ pub struct Workspace {
 #[serde(rename_all = "camelCase")]
 pub struct InviteRecord {
     pub code: String,
+    /// The invite's 128-bit secret (base32); empty in older records.
+    #[serde(default)]
+    pub key: String,
     pub created: u64,
     pub expires: u64,
     /// Folders offered to the computer once it is approved.
@@ -121,11 +124,11 @@ pub fn open_invite<'a>(list: &'a [InviteRecord], code: &str, now: u64) -> Option
         .find(|r| r.code == code && r.used_by.is_none() && now < r.expires)
 }
 
-/// Codes of the invites that can still be used.
-pub fn open_codes(list: &[InviteRecord], now: u64) -> Vec<&str> {
+/// (code, key) of the invites that can still be used.
+pub fn open_codes(list: &[InviteRecord], now: u64) -> Vec<(&str, &str)> {
     list.iter()
         .filter(|r| r.used_by.is_none() && now < r.expires)
-        .map(|r| r.code.as_str())
+        .map(|r| (r.code.as_str(), r.key.as_str()))
         .collect()
 }
 
@@ -166,6 +169,7 @@ mod tests {
     fn rec(code: &str, created: u64, expires: u64, used: Option<&str>) -> InviteRecord {
         InviteRecord {
             code: code.into(),
+            key: String::new(),
             created,
             expires,
             folders: vec![],

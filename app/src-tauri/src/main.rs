@@ -789,10 +789,19 @@ async fn create_invite(
             .unwrap_or_default();
         let now = office::now();
         let code = invite::new_code();
-        let inv = invite::Invite::new(&my_id, &my_device_name(c, &my_id), addrs, code.clone(), now);
+        let key = invite::new_key();
+        let inv = invite::Invite::new(
+            &my_id,
+            &my_device_name(c, &my_id),
+            addrs,
+            code.clone(),
+            key.clone(),
+            now,
+        );
         let mut list = office::read_invites(&dir);
         list.push(office::InviteRecord {
             code,
+            key,
             created: now,
             expires: inv.exp,
             folders,
@@ -888,7 +897,7 @@ async fn join_with_invite(state: State<'_, Arc<AppState>>, text: String) -> Resu
             Some(j) => j.original_name.clone(),
             None => my_device_name(c, &my_id),
         };
-        c.set_device_name(&my_id, &invite::tag_name(&original, &inv.code, &my_id))
+        c.set_device_name(&my_id, &invite::tag_name(&original, &inv.key, &my_id))
             .map_err(|e| e.to_string())?;
         let addr = inv.addrs.first().cloned().unwrap_or_default();
         if !c

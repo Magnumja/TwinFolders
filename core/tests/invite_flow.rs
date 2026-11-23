@@ -25,11 +25,13 @@ fn invited_computer_is_recognised_by_its_code() {
 
     // Central: create the invite (address = its local listen port here).
     let code = invite::new_code();
+    let key = invite::new_key();
     let text = invite::Invite::new(
         &hub.id,
         "central",
         vec![format!("tcp://127.0.0.1:{}", hub.listen_port)],
         code.clone(),
+        key.clone(),
         1_000,
     )
     .encode();
@@ -38,7 +40,7 @@ fn invited_computer_is_recognised_by_its_code() {
     let inv = invite::Invite::decode(&text, 1_001).unwrap();
     assert_eq!(inv.hub, hub.id);
     note.client
-        .set_device_name(&note.id, &invite::tag_name("note-ana", &inv.code, &note.id))
+        .set_device_name(&note.id, &invite::tag_name("note-ana", &inv.key, &note.id))
         .unwrap();
     note.client
         .add_device(&inv.hub, &inv.name, &[inv.addrs[0].as_str()])
@@ -53,9 +55,12 @@ fn invited_computer_is_recognised_by_its_code() {
     let req = pending.iter().find(|p| p.device_id == note.id).unwrap();
     let (clean, proof) = invite::parse_tag(&req.name);
     let proof = proof.unwrap_or_else(|| panic!("no proof in {:?}", req.name));
-    assert!(!req.name.contains(&code), "the code itself is never sent");
+    assert!(
+        !req.name.contains(&code) && !req.name.contains(&key),
+        "neither the code nor the key is ever sent"
+    );
     assert_eq!(
-        invite::match_code(&[&code], &note.id, &proof),
+        invite::match_code(&[(code.as_str(), key.as_str())], &note.id, &proof),
         Some(code.as_str())
     );
     assert_eq!(clean, "note-ana");

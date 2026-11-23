@@ -1,15 +1,18 @@
 //! Invites for team computers (office mode).
 //!
 //! The central computer creates an invite: its device ID, name, optional
-//! Tailscale address and a one-time code, valid for a limited time. The
-//! team computer pastes it, adds the central and connects. While waiting
-//! for approval it advertises a *proof* in its name (`note-ana
-//! [tf:ABCD-EFGH]`): an HMAC of its own device ID keyed with the code.
-//! The central recomputes it for each pending request, so it can tell an
-//! invited computer from an unknown one. The proof never reveals the code
-//! (Syncthing sends the name to anyone who connects) and is bound to that
-//! one device ID, so overhearing it does not let another computer reuse
-//! it. Approval on the central stays an explicit click.
+//! Tailscale address, a short code people can read (`K7Q2-9XPM`, a label
+//! only) and a random 128-bit key, valid for a limited time. The team
+//! computer pastes it, adds the central and connects. While waiting for
+//! approval it advertises a *proof* in its name (`note-ana [tf:ABCD-EFGH]`):
+//! HMAC-SHA256 of its own device ID keyed with the 128-bit key. The
+//! central recomputes it for each pending request, so it can tell an
+//! invited computer from an unknown one.
+//!
+//! Syncthing sends that name to anyone who connects, so the proof must not
+//! give the secret away: the key has 128 bits (no offline search recovers
+//! it) and the proof is bound to one device ID (overhearing it does not
+//! let another computer reuse it). Approval stays an explicit click.
 //!
 //! The text is `twinfolders-convite:` + base32 of a small JSON object, so
 //! it survives being pasted into chat apps and e-mail.
@@ -36,8 +39,10 @@ pub struct Invite {
     /// `tcp://host:port` addresses of the central (may be empty).
     #[serde(default)]
     pub addrs: Vec<String>,
-    /// One-time code, `XXXX-XXXX`.
+    /// Short code shown to people, `XXXX-XXXX` (a label, not the secret).
     pub code: String,
+    /// 128-bit random key, base32 (26 chars): the secret behind the proof.
+    pub key: String,
     /// Expiry, Unix seconds.
     pub exp: u64,
 }
@@ -94,13 +99,21 @@ fn clean_name(s: &str) -> String {
 }
 
 impl Invite {
-    pub fn new(hub: &str, name: &str, addrs: Vec<String>, code: String, now: u64) -> Self {
+    pub fn new(
+        hub: &str,
+        name: &str,
+        addrs: Vec<String>,
+        code: String,
+        key: String,
+        now: u64,
+    ) -> Self {
         Self {
             v: 1,
             hub: hub.to_string(),
             name: clean_name(name),
             addrs,
             code,
+            key,
             exp: now + VALID_SECS,
         }
     }
@@ -117,7 +130,11 @@ impl Invite {
         let body = compact.strip_prefix(PREFIX).ok_or(Error::NotAnInvite)?;
         let bytes = base32_decode(body).ok_or(Error::Damaged)?;
         let mut inv: Invite = serde_json::from_slice(&bytes).map_err(|_| Error::Damaged)?;
-        if inv.v != 1 || !valid_code(&inv.code) || inv.addrs.len() > MAX_ADDRS {
+        if inv.v != 1
+            || !valid_code(&inv.code)
+            || !valid_key(&inv.key)
+            || inv.addrs.len() > MAX_ADDRS
+        {
             return Err(Error::Damaged);
         }
         inv.hub = peer::normalize_device_id(&inv.hub).map_err(|_| Error::Damaged)?;
@@ -137,12 +154,27 @@ impl Invite {
     }
 }
 
-/// Proof that the computer with `device_id` holds the invite `code`:
-/// HMAC-SHA256(code, device_id), first 40 bits as `XXXX-XXXX` (base32).
-pub fn proof(code: &str, device_id: &str) -> String {
-    let key = ring::hmac::Key::new(ring::hmac::HMAC_SHA256, code.as_bytes());
-    let tag = ring::hmac::sign(&key, device_id.as_bytes());
-    let s = base32_encode(&tag.as_ref()[..5]);
+/// A fresh 128-bit random key (base32, 26 chars).
+pub fn new_key() -> String {
+    let mut buf = [0u8; 16];
+    getrandom::fill(&mut buf).expect("OS random number generator");
+    base32_encode(&buf)
+}
+
+pub fn valid_key(k: &str) -> bool {
+    k.len() == 26 && k.bytes().all(|b| B32.contains(&b))
+}
+
+fn mac(key: &str, device_id: &str) -> String {
+    let k = ring::hmac::Key::new(ring::hmac::HMAC_SHA256, key.as_bytes());
+    let tag = ring::hmac::sign(&k, device_id.as_bytes());
+    base32_encode(&tag.as_ref()[..5])
+}
+
+/// Proof that the computer with `device_id` holds the invite `key`:
+/// HMAC-SHA256(key, device_id), first 40 bits as `XXXX-XXXX` (base32).
+pub fn proof(key: &str, device_id: &str) -> String {
+    let s = mac(key, device_id);
     format!("{}-{}", &s[..4], &s[4..8])
 }
 
@@ -151,11 +183,13 @@ fn valid_proof(p: &str) -> bool {
     b.len() == 9 && b[4] == b'-' && b.iter().enumerate().all(|(i, x)| i == 4 || B32.contains(x))
 }
 
-/// Constant-time check of a proof a pending computer advertised.
-pub fn proof_matches(code: &str, device_id: &str, advertised: &str) -> bool {
-    let key = ring::hmac::Key::new(ring::hmac::HMAC_SHA256, code.as_bytes());
-    let tag = ring::hmac::sign(&key, device_id.as_bytes());
-    let expected = base32_encode(&tag.as_ref()[..5]);
+/// Constant-time check of a proof a pending computer advertised. A key
+/// that is not a valid 128-bit key never matches.
+pub fn proof_matches(key: &str, device_id: &str, advertised: &str) -> bool {
+    if !valid_key(key) {
+        return false;
+    }
+    let expected = mac(key, device_id);
     let got: String = advertised.chars().filter(|c| *c != '-').collect();
     expected.len() == got.len()
         && expected
@@ -166,9 +200,9 @@ pub fn proof_matches(code: &str, device_id: &str, advertised: &str) -> bool {
 }
 
 /// Name a joining computer advertises while waiting: `note-ana [tf:PROOF]`.
-pub fn tag_name(name: &str, code: &str, my_device_id: &str) -> String {
+pub fn tag_name(name: &str, key: &str, my_device_id: &str) -> String {
     let base: String = clean_name(name).chars().take(40).collect();
-    format!("{} [tf:{}]", base.trim(), proof(code, my_device_id))
+    format!("{} [tf:{}]", base.trim(), proof(key, my_device_id))
 }
 
 /// Splits `note-ana [tf:PROOF]` into (`note-ana`, `PROOF`). Names without
@@ -185,14 +219,18 @@ pub fn parse_tag(name: &str) -> (String, Option<String>) {
     (name.to_string(), None)
 }
 
-/// Which of `codes` the pending computer `device_id` proves to hold, if
-/// exactly one does.
-pub fn match_code<'a>(codes: &[&'a str], device_id: &str, advertised: &str) -> Option<&'a str> {
-    let mut hits = codes
+/// Which open invite, given as (code, key), the pending computer
+/// `device_id` proves to hold, if exactly one does. Returns its code.
+pub fn match_code<'a>(
+    invites: &[(&'a str, &str)],
+    device_id: &str,
+    advertised: &str,
+) -> Option<&'a str> {
+    let mut hits = invites
         .iter()
-        .filter(|c| proof_matches(c, device_id, advertised));
+        .filter(|(_, key)| proof_matches(key, device_id, advertised));
     match (hits.next(), hits.next()) {
-        (Some(c), None) => Some(c),
+        (Some((code, _)), None) => Some(code),
         _ => None,
     }
 }
@@ -250,9 +288,13 @@ mod tests {
             "mac-ana",
             vec!["tcp://100.64.0.1:22001".into()],
             "K7Q2-9XPM".into(),
+            KEY.into(),
             now,
         )
     }
+
+    const KEY: &str = "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
+    const KEY2: &str = "ZYXWVUTSRQPONMLKJIHGFEDCBA";
 
     #[test]
     fn roundtrip_survives_chat_line_breaks() {
@@ -291,6 +333,12 @@ mod tests {
         }
         .encode();
         assert_eq!(Invite::decode(&bad_code, 1001), Err(Error::Damaged));
+        let bad_key = Invite {
+            key: "short".into(),
+            ..sample(1000)
+        }
+        .encode();
+        assert_eq!(Invite::decode(&bad_key, 1001), Err(Error::Damaged));
     }
 
     #[test]
@@ -304,31 +352,45 @@ mod tests {
     }
 
     #[test]
-    fn name_tag_carries_a_proof_bound_to_the_device_not_the_code() {
+    fn keys_have_128_bits_and_differ() {
+        let a = new_key();
+        assert!(valid_key(&a));
+        assert_ne!(a, new_key());
+        assert!(!valid_key("ABC"));
+        assert!(!valid_key("abcdefghijklmnopqrstuvwxyz"));
+    }
+
+    #[test]
+    fn name_tag_carries_a_proof_bound_to_the_device_not_the_secret() {
         let me = hub();
-        let t = tag_name("note-ana", "K7Q2-9XPM", &me);
-        assert!(!t.contains("K7Q2-9XPM"), "the code itself never leaves");
+        let t = tag_name("note-ana", KEY, &me);
+        assert!(!t.contains(KEY) && !t.contains("K7Q2-9XPM"));
         let (clean, p) = parse_tag(&t);
         assert_eq!(clean, "note-ana");
         let p = p.unwrap();
-        assert!(proof_matches("K7Q2-9XPM", &me, &p));
-        // An overheard proof is useless from another device or code.
-        assert!(!proof_matches("K7Q2-9XPM", "OTHERDEVICE", &p));
-        assert!(!proof_matches("AAAA-BBBB", &me, &p));
+        assert!(proof_matches(KEY, &me, &p));
+        // An overheard proof is useless from another device or another key.
+        assert!(!proof_matches(KEY, "OTHERDEVICE", &p));
+        assert!(!proof_matches(KEY2, &me, &p));
+        // Old records without a real key never match.
+        assert!(!proof_matches("", &me, &p));
         assert_eq!(parse_tag("note-ana"), ("note-ana".into(), None));
         assert_eq!(parse_tag("x [tf:nope]"), ("x [tf:nope]".into(), None));
-        assert!(tag_name("a\u{7}b", "K7Q2-9XPM", &me).starts_with("ab "));
+        assert!(tag_name("a\u{7}b", KEY, &me).starts_with("ab "));
     }
 
     #[test]
     fn match_code_needs_exactly_one_invite() {
         let me = hub();
-        let p = proof("K7Q2-9XPM", &me);
+        let p = proof(KEY, &me);
         assert_eq!(
-            match_code(&["AAAA-BBBB", "K7Q2-9XPM"], &me, &p),
+            match_code(&[("AAAA-BBBB", KEY2), ("K7Q2-9XPM", KEY)], &me, &p),
             Some("K7Q2-9XPM")
         );
-        assert_eq!(match_code(&["AAAA-BBBB"], &me, &p), None);
-        assert_eq!(match_code(&["K7Q2-9XPM", "K7Q2-9XPM"], &me, &p), None);
+        assert_eq!(match_code(&[("AAAA-BBBB", KEY2)], &me, &p), None);
+        assert_eq!(
+            match_code(&[("K7Q2-9XPM", KEY), ("CCCC-DDDD", KEY)], &me, &p),
+            None
+        );
     }
 }
