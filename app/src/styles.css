@@ -483,3 +483,20 @@ kbd { display: inline-grid; place-items: center; min-width: 22px; height: 22px; 
 .picker .inline-link { align-self: flex-start; }
 .role-picker { border: 0; padding: 0; margin: 0; display: flex; flex-direction: column; gap: 6px; }
 .role-picker legend { margin-bottom: 6px; }
+
+/* Invites (Fatia 9) */
+.invite-body { padding: 0 20px 18px; display: flex; flex-direction: column; gap: 12px; }
+.chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.chip-check { display: inline-flex; align-items: center; gap: 6px; border: 1px solid var(--border); border-radius: 999px; padding: 4px 10px; font-size: 12.5px; cursor: pointer; }
+.chip-check.on { border-color: color-mix(in srgb, var(--accent) 55%, var(--border)); background: color-mix(in srgb, var(--accent) 8%, transparent); }
+.invite-text { display: flex; flex-direction: column; gap: 8px; }
+.invite-text textarea, .join-invite textarea { font-size: 12px; word-break: break-all; resize: vertical; }
+.invite-text .row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.open-invites { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; font-size: 13px; }
+.open-invites li { display: flex; align-items: center; gap: 10px; border-top: 1px solid var(--border); padding-top: 6px; }
+.actions.start { justify-content: flex-start; }
+.join-invite { display: flex; flex-direction: column; gap: 10px; }
+.notice-ok { border-color: color-mix(in srgb, var(--ok) 40%, transparent); background: color-mix(in srgb, var(--ok) 7%, transparent); }
+.badge { display: inline-block; margin-left: 8px; font-size: 11.5px; padding: 1px 8px; border-radius: 999px; border: 1px solid; vertical-align: 1px; }
+.badge-ok { color: var(--ok); border-color: color-mix(in srgb, var(--ok) 45%, transparent); }
+.badge-warn { color: var(--wait); border-color: color-mix(in srgb, var(--wait) 45%, transparent); }

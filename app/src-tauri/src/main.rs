@@ -6,11 +6,14 @@
 
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod office;
+
 use std::collections::BTreeSet;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
+use office::{Role, Workspace};
 use serde::Serialize;
 use tauri::menu::{Menu, MenuItem};
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
@@ -24,7 +27,7 @@ use twinfolders_core::preflight;
 use twinfolders_core::resolve::{self, ConflictEntry, Outcome};
 use twinfolders_core::service::{self, ServiceConfig};
 use twinfolders_core::versioning::Choice;
-use twinfolders_core::{setup, stconfig, tailscale};
+use twinfolders_core::{invite, setup, stconfig, tailscale};
 
 /// Events that change what the panel shows.
 const WATCHED_EVENTS: &[&str] = &[
@@ -62,6 +65,22 @@ struct AppState {
     /// can land milliseconds apart; reusing a fresh result avoids transfer
     /// rates computed over a near-zero interval (spikes or zeros).
     last: Mutex<Option<(Instant, Overview)>>,
+    /// The app's config folder (role, invites, SSH users), set at startup.
+    config_dir: Mutex<Option<PathBuf>>,
+}
+
+impl AppState {
+    fn dir(&self) -> Result<PathBuf, String> {
+        lock(&self.config_dir)
+            .clone()
+            .ok_or_else(|| "pasta de configuração indisponível".into())
+    }
+
+    fn workspace(&self) -> Workspace {
+        self.dir()
+            .map(|d| office::read_workspace(&d))
+            .unwrap_or_default()
+    }
 }
 
 #[derive(Serialize, Clone)]
@@ -233,6 +252,7 @@ fn snapshot(st: &AppState) -> Snapshot {
     let prev = lock(&st.rates).clone();
     match overview::collect(&client, prev.as_ref()) {
         Ok((ov, sample)) => {
+            finish_join(st, &client, &ov);
             *lock(&st.rates) = Some(sample);
             *last = Some((Instant::now(), ov.clone()));
             Snapshot::Ok {
@@ -540,6 +560,9 @@ async fn add_device(
     name: String,
     address: String,
 ) -> Result<String, String> {
+    if let Ok(id) = twinfolders_core::peer::normalize_device_id(&device_id) {
+        office::member_guard(&state.workspace(), &[&id])?;
+    }
     with_client(state.inner(), move |c| {
         twinfolders_core::peer::add_peer(
             c,
@@ -560,14 +583,47 @@ async fn approve_device(
     device_id: String,
     name: String,
 ) -> Result<(), String> {
+    let ws = state.workspace();
+    office::member_guard(&ws, &[&device_id])?;
+    let dir = state.dir()?;
     with_client(state.inner(), move |c| {
+        // An invited computer shows `name [tf:CODE]`: save the clean name,
+        // use up the invite and offer the folders chosen for it.
+        let (clean, code) = invite::parse_tag(&name);
         let pending = PendingDevice {
-            device_id,
-            name,
+            device_id: device_id.clone(),
+            name: clean,
             address: String::new(),
             time: String::new(),
         };
-        pairing::approve_device(c, &pending, None).map_err(|e| e.to_string())
+        pairing::approve_device(c, &pending, None).map_err(|e| e.to_string())?;
+        let Some(code) = code else { return Ok(()) };
+        let mut list = office::read_invites(&dir);
+        let now = office::now();
+        let Some(folders) = office::open_invite(&list, &code, now).map(|r| r.folders.clone())
+        else {
+            return Ok(());
+        };
+        if let Some(r) = list.iter_mut().find(|r| r.code == code) {
+            r.used_by = Some(device_id.clone());
+        }
+        office::write_invites(&dir, &list)?;
+        let my_id = c.my_id().map_err(|e| e.to_string())?;
+        for f in folders {
+            let Ok(folder) = c.folder(&f) else { continue };
+            let mut peers: Vec<String> = folder
+                .devices
+                .into_iter()
+                .map(|d| d.device_id)
+                .filter(|d| *d != my_id)
+                .collect();
+            if !peers.contains(&device_id) {
+                peers.push(device_id.clone());
+            }
+            let refs: Vec<&str> = peers.iter().map(String::as_str).collect();
+            pairing::set_folder_peers(c, &f, &my_id, &refs).map_err(|e| e.to_string())?;
+        }
+        Ok(())
     })
     .await
 }
@@ -592,6 +648,8 @@ async fn share_folder(
     peer_ids: Vec<String>,
     extra_ignores: Vec<String>,
 ) -> Result<String, String> {
+    let refs: Vec<&str> = peer_ids.iter().map(String::as_str).collect();
+    office::member_guard(&state.workspace(), &refs)?;
     with_client(state.inner(), move |c| {
         let local_id = c.my_id().map_err(|e| e.to_string())?;
         let existing: Vec<String> = c
@@ -627,6 +685,8 @@ async fn set_folder_peers(
     folder_id: String,
     peer_ids: Vec<String>,
 ) -> Result<(), String> {
+    let refs: Vec<&str> = peer_ids.iter().map(String::as_str).collect();
+    office::member_guard(&state.workspace(), &refs)?;
     with_client(state.inner(), move |c| {
         let local_id = c.my_id().map_err(|e| e.to_string())?;
         let peers: Vec<&str> = peer_ids.iter().map(String::as_str).collect();
@@ -639,59 +699,229 @@ async fn set_folder_peers(
 /// Its files stay where they are.
 #[tauri::command]
 async fn remove_device(state: State<'_, Arc<AppState>>, device_id: String) -> Result<(), String> {
+    if state.workspace().role == Role::Member {
+        return Err("num computador do time, só a central desconecta computadores".into());
+    }
     with_client(state.inner(), move |c| {
         pairing::remove_device(c, &device_id).map_err(|e| e.to_string())
     })
     .await
 }
 
-/* ---------- role of this computer ---------- */
+/* ---------- role of this computer and office invites ---------- */
 
-/// How this computer is used: a personal pair, the office's central
-/// computer (sees and orchestrates the team's), or a team member's.
-#[derive(Serialize, serde::Deserialize, Clone, Copy, PartialEq, Eq, Default, Debug)]
-#[serde(rename_all = "camelCase")]
-enum Role {
-    #[default]
-    Personal,
-    Hub,
-    Member,
-}
-
-#[derive(Serialize, serde::Deserialize, Default)]
-#[serde(rename_all = "camelCase")]
-struct Workspace {
-    #[serde(default)]
-    role: Role,
-}
-
-fn workspace_file(app: &AppHandle) -> Option<PathBuf> {
-    app.path()
-        .app_config_dir()
-        .ok()
-        .map(|d| d.join("workspace.json"))
+#[tauri::command]
+fn get_workspace(state: State<'_, Arc<AppState>>) -> Workspace {
+    state.workspace()
 }
 
 #[tauri::command]
-fn get_workspace(app: AppHandle) -> Workspace {
-    workspace_file(&app)
-        .and_then(|p| std::fs::read_to_string(p).ok())
-        .and_then(|s| serde_json::from_str(&s).ok())
-        .unwrap_or_default()
-}
-
-#[tauri::command]
-fn set_role(app: AppHandle, role: Role) -> Result<(), String> {
-    let path = workspace_file(&app).ok_or("pasta de configuração indisponível")?;
-    if let Some(dir) = path.parent() {
-        std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
+fn set_role(state: State<'_, Arc<AppState>>, role: Role) -> Result<(), String> {
+    let dir = state.dir()?;
+    let mut ws = office::read_workspace(&dir);
+    ws.role = role;
+    if role != Role::Member {
+        // Leaving the team: forget the central and any pending join.
+        ws.hub_id = None;
+        ws.hub_name = None;
+        ws.joining = None;
     }
-    let ws = Workspace { role };
-    std::fs::write(
-        &path,
-        serde_json::to_string_pretty(&ws).map_err(|e| e.to_string())?,
-    )
-    .map_err(|e| e.to_string())
+    office::write_workspace(&dir, &ws)
+}
+
+/// This computer's name as the other side sees it.
+fn my_device_name(c: &SyncthingClient, my_id: &str) -> String {
+    c.devices()
+        .ok()
+        .and_then(|ds| ds.into_iter().find(|d| d.device_id == my_id))
+        .map(|d| d.name)
+        .filter(|n| !n.is_empty())
+        .unwrap_or_else(|| my_id.chars().take(7).collect())
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct OpenInvite {
+    code: String,
+    expires: u64,
+    folders: Vec<String>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct Invites {
+    open: Vec<OpenInvite>,
+    /// Pending device ID -> code of the open invite it carries.
+    matches: std::collections::BTreeMap<String, String>,
+}
+
+/// Creates a one-time invite (24 h) for a team computer. `folders` are
+/// offered to it as soon as the central approves it. Returns the text to
+/// send to the person at that computer.
+#[tauri::command]
+async fn create_invite(
+    state: State<'_, Arc<AppState>>,
+    folders: Vec<String>,
+) -> Result<String, String> {
+    let dir = state.dir()?;
+    with_client(state.inner(), move |c| {
+        let my_id = c.my_id().map_err(|e| e.to_string())?;
+        let known: Vec<String> = c
+            .folders()
+            .map_err(|e| e.to_string())?
+            .into_iter()
+            .map(|f| f.id)
+            .collect();
+        if let Some(f) = folders.iter().find(|f| !known.contains(f)) {
+            return Err(format!("pasta desconhecida: {f}"));
+        }
+        // The central's Tailscale address helps a computer on another
+        // network find it; on the same network discovery does it alone.
+        let addrs: Vec<String> = tailscale::status()
+            .ok()
+            .and_then(|s| s.me)
+            .and_then(|me| me.ips.into_iter().find(|ip| ip.contains('.')))
+            .map(|ip| vec![format!("tcp://{ip}:{}", service::DEFAULT_LISTEN_PORT)])
+            .unwrap_or_default();
+        let now = office::now();
+        let code = invite::new_code();
+        let inv = invite::Invite::new(&my_id, &my_device_name(c, &my_id), addrs, code.clone(), now);
+        let mut list = office::read_invites(&dir);
+        list.push(office::InviteRecord {
+            code,
+            created: now,
+            expires: inv.exp,
+            folders,
+            used_by: None,
+        });
+        office::write_invites(&dir, &list)?;
+        Ok(inv.encode())
+    })
+    .await
+}
+
+#[tauri::command]
+async fn list_invites(state: State<'_, Arc<AppState>>) -> Result<Invites, String> {
+    let dir = state.dir()?;
+    with_client(state.inner(), move |c| {
+        let now = office::now();
+        let list = office::read_invites(&dir);
+        let mut matches = std::collections::BTreeMap::new();
+        for p in c.pending_devices().map_err(|e| e.to_string())? {
+            if let (_, Some(code)) = invite::parse_tag(&p.name) {
+                if office::open_invite(&list, &code, now).is_some() {
+                    matches.insert(p.device_id, code);
+                }
+            }
+        }
+        let open = list
+            .iter()
+            .filter(|r| r.used_by.is_none() && now < r.expires)
+            .map(|r| OpenInvite {
+                code: r.code.clone(),
+                expires: r.expires,
+                folders: r.folders.clone(),
+            })
+            .collect();
+        Ok(Invites { open, matches })
+    })
+    .await
+}
+
+#[tauri::command]
+fn cancel_invite(state: State<'_, Arc<AppState>>, code: String) -> Result<(), String> {
+    let dir = state.dir()?;
+    let list: Vec<office::InviteRecord> = office::read_invites(&dir)
+        .into_iter()
+        .filter(|r| r.code != code)
+        .collect();
+    office::write_invites(&dir, &list)
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct InvitePreview {
+    hub_id: String,
+    hub_name: String,
+    expires: u64,
+}
+
+/// Reads an invite without doing anything, so the person can confirm
+/// which central they are joining.
+#[tauri::command]
+fn read_invite(text: String) -> Result<InvitePreview, String> {
+    let inv = invite::Invite::decode(&text, office::now()).map_err(|e| e.to_string())?;
+    Ok(InvitePreview {
+        hub_id: inv.hub,
+        hub_name: inv.name,
+        expires: inv.exp,
+    })
+}
+
+/// Team computer: joins the central from an invite. Adds the central,
+/// marks this computer as a team member and advertises the invite code in
+/// its name until the central approves it.
+#[tauri::command]
+async fn join_with_invite(state: State<'_, Arc<AppState>>, text: String) -> Result<String, String> {
+    let dir = state.dir()?;
+    with_client(state.inner(), move |c| {
+        let inv = invite::Invite::decode(&text, office::now()).map_err(|e| e.to_string())?;
+        let my_id = c.my_id().map_err(|e| e.to_string())?;
+        if inv.hub == my_id {
+            return Err(
+                "este convite foi criado neste computador; use-o no computador do time".into(),
+            );
+        }
+        let mut ws = office::read_workspace(&dir);
+        let original = match &ws.joining {
+            Some(j) => j.original_name.clone(),
+            None => my_device_name(c, &my_id),
+        };
+        c.set_device_name(&my_id, &invite::tag_name(&original, &inv.code))
+            .map_err(|e| e.to_string())?;
+        let addr = inv.addrs.first().cloned().unwrap_or_default();
+        if !c
+            .devices()
+            .map_err(|e| e.to_string())?
+            .iter()
+            .any(|d| d.device_id == inv.hub)
+        {
+            twinfolders_core::peer::add_peer(
+                c,
+                &inv.hub,
+                &inv.name,
+                &addr,
+                service::DEFAULT_LISTEN_PORT,
+            )
+            .map_err(|e| e.to_string())?;
+        }
+        ws.role = Role::Member;
+        ws.hub_id = Some(inv.hub.clone());
+        ws.hub_name = Some(inv.name.clone());
+        ws.joining = Some(office::Joining {
+            code: inv.code,
+            original_name: original,
+        });
+        office::write_workspace(&dir, &ws)?;
+        Ok(inv.name)
+    })
+    .await
+}
+
+/// Once the central approved this team computer (it is connected), put
+/// its real name back and forget the invite.
+fn finish_join(st: &AppState, c: &SyncthingClient, ov: &Overview) {
+    let Ok(dir) = st.dir() else { return };
+    let mut ws = office::read_workspace(&dir);
+    let (Some(j), Some(hub)) = (ws.joining.clone(), ws.hub_id.clone()) else {
+        return;
+    };
+    if ov.devices.iter().any(|d| d.id == hub && d.connected)
+        && c.set_device_name(&ov.my_id, &j.original_name).is_ok()
+    {
+        ws.joining = None;
+        let _ = office::write_workspace(&dir, &ws);
+    }
 }
 
 /// Accepts a folder offered by a paired device, stored at `path` here.
@@ -703,6 +933,7 @@ async fn accept_folder(
     label: String,
     path: String,
 ) -> Result<(), String> {
+    office::member_guard(&state.workspace(), &[&offered_by])?;
     with_client(state.inner(), move |c| {
         let local_id = c.my_id().map_err(|e| e.to_string())?;
         let offer = PendingFolder {
@@ -1009,6 +1240,11 @@ fn main() {
             remove_device,
             get_workspace,
             set_role,
+            create_invite,
+            list_invites,
+            cancel_invite,
+            read_invite,
+            join_with_invite,
             accept_folder,
             remove_folder,
             set_folder_paused,
@@ -1021,6 +1257,7 @@ fn main() {
             set_versioning
         ])
         .setup(move |app| {
+            *lock(&state.config_dir) = app.path().app_config_dir().ok();
             let open = MenuItem::with_id(app, "open", "Abrir painel", true, None::<&str>)?;
             let quit = MenuItem::with_id(app, "quit", "Sair do TwinFolders", true, None::<&str>)?;
             let menu = Menu::with_items(app, &[&open, &quit])?;

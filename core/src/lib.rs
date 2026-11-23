@@ -3,6 +3,7 @@
 pub mod client;
 pub mod conflict;
 pub mod guitls;
+pub mod invite;
 pub mod names;
 pub mod overview;
 pub mod pairing;

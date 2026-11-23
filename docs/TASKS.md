@@ -76,7 +76,14 @@ Cenário: uma central (Mac da administradora) e vários PCs Windows do time; o u
 | ✅ 8.3 | Papel deste computador em Preferências: **Uso pessoal**, **Central do escritório**, **Computador do time** (`workspace.json` na pasta de configuração do app). Central: tela "Computadores do time" com cartões (estado, pastas, velocidade, Desconectar), textos do escritório. Membro: não desconecta nem inclui computadores (feito pela central) | testes de componente (`Team.test.tsx`, `team.test.ts`); `docs/screenshot-team.jpg` |
 | ✅ 8.4 | Telas para N computadores: escolher quem recebe ao adicionar pasta (lista com marcar todos), **Compartilhar com…** em cada pasta (avisa quem vai parar de receber), linha da pasta mostra com quem é compartilhada, "Esperando note-carla" em vez de "o outro", textos sem "os dois" quando há mais | `docs/screenshot-share.jpg` (dados simulados). Com computadores reais 🖐 |
 
-Próximas (plano de 2026-11-22): 9 convite para os PCs do time (só falam com a central), 10 painel de Atividade, 11 blindagem (regras do Tailscale, verificação de criptografia de disco, registro de ações), 12 acesso remoto à tela (RDP no Windows Pro) e implantação.
+## Fatia 9 — Convite para os computadores do time
+| # | Tarefa | Evidência |
+|---|---|---|
+| ✅ 9.1 | Convite (`core/src/invite.rs`): texto `twinfolders-convite:` + base32 de JSON com ID da central (validado com checksum), nome, endereço Tailscale da central (validado), código de uso único `XXXX-XXXX` (CSPRNG, sem caracteres parecidos) e validade de 24 h. Sobrevive a quebras de linha de apps de mensagem | 4 unit (ida e volta, vencido, alterado, ID/endereço/código inválidos, nome com caracteres de controle) |
+| ✅ 9.2 | Central: **Convidar um computador do time** (escolhe as pastas que ele vai receber), lista de convites abertos com Cancelar; convites guardados em `invites.json` só para o dono. Em Pendências, o pedido que veio com convite aparece como **Convidado · código**; os outros como **Sem convite** ou **Convite vencido ou já usado**. Ao aprovar um convidado: salva o nome limpo, marca o convite como usado e oferece as pastas escolhidas | integração com 2 Syncthing reais (`invite_flow`: o pedido chega com o código no nome, aprovação com nome limpo, conectam, nome restaurado); testes de componente; `docs/screenshot-invite.jpg`, `docs/screenshot-invited.jpg` |
+| ✅ 9.3 | Computador do time: cola o convite (em Computadores ou no guia), vê para qual central vai ("ID começa com …") e entra. Vira **Computador do time**, anuncia o código no nome até ser aprovado e depois volta ao nome normal sozinho. Travas: só pareia, aceita e compartilha pastas com a central; não desconecta computadores (proteção contra engano, não contra quem está no próprio computador) | 3 unit (`office.rs`: arquivos só do dono, convite de uso único e validade, trava do membro); testes de componente |
+
+Próximas (plano de 2026-11-22): 10 painel de Atividade, 11 blindagem (regras do Tailscale, verificação de criptografia de disco, registro de ações), 12 acesso remoto à tela (RDP no Windows Pro) e implantação.
 
 ## Paralelismo previsto
 - 0.2 e 1.2/1.3/1.4 em agentes paralelos (lógica pura, independentes).

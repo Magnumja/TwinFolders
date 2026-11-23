@@ -8,6 +8,7 @@ import { shortId } from "../lib/format";
 import { motionTokens } from "../lib/motion-tokens";
 import { useToast } from "./Toasts";
 import { IconCopy, IconPlus } from "./ui";
+import { JoinInvite } from "./Invite";
 
 function CopyId({ id, label = "Copiar o ID deste computador" }: { id: string; label?: string }) {
   const [copied, setCopied] = useState(false);
@@ -180,6 +181,10 @@ export function ConnectGuide({ overview, onChanged, onAddFolder, go }: { overvie
             <IdBlocks id={overview.myId} />
             <CopyId id={overview.myId} />
           </div>
+          <details className="trouble">
+            <summary>Recebeu um convite da central do escritório?</summary>
+            <JoinInvite onJoined={onChanged} />
+          </details>
         </Step>
         <Step n={3} state={s(1)} title={stage === "approveHere" ? "Aprove o pedido aqui" : "Aprove o pedido no outro computador"}>
           {stage === "approveHere" ? (

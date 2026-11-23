@@ -645,6 +645,17 @@ impl SyncthingClient {
         )
     }
 
+    /// Renames a device in the config (also this computer's own entry,
+    /// which is the name the other side sees).
+    pub fn set_device_name(&self, device_id: &str, name: &str) -> Result<()> {
+        validate_device_id(device_id)?;
+        self.send_json(
+            "PATCH",
+            &format!("/rest/config/devices/{device_id}"),
+            &serde_json::json!({ "name": name }),
+        )
+    }
+
     /// Removes a device from the config. Callers unshare its folders first
     /// (see `pairing::remove_device`).
     pub fn remove_device(&self, device_id: &str) -> Result<()> {

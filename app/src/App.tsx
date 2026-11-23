@@ -15,6 +15,7 @@ import { ComputersView, FoldersView, OverviewView, PendingView, type Actions } f
 import { HelpView } from "./components/Guide";
 import { SetupView } from "./components/Setup";
 import { RoleContext, ShareEditor } from "./components/Team";
+import { WorkspaceContext } from "./components/Invite";
 import { ToastProvider, useToast } from "./components/Toasts";
 
 const POLL_MS = 3000;
@@ -60,7 +61,8 @@ function AppShell() {
   const [versioning, setVersioning] = useState<FolderView | null>(null);
   const [prefs, setPrefs] = useState(false);
   const [sharing, setSharing] = useState<FolderView | null>(null);
-  const [role, setRoleState] = useState<Role>("personal");
+  const [ws, setWs] = useState<Workspace>({ role: "personal" });
+  const role = ws.role;
   const [conflicts, setConflicts] = useState<FolderConflicts[]>([]);
   const toast = useToast();
   const m = useSafeMotion(motionTokens.distance.sm);
@@ -93,19 +95,29 @@ function AppShell() {
 
   useEffect(() => {
     invoke<Profile>("get_profile").then(setProfile).catch(() => setProfile(null));
-    invoke<Workspace>("get_workspace").then((w) => setRoleState(w.role)).catch(() => undefined);
   }, []);
+
+  const reloadWs = useCallback(() => {
+    invoke<Workspace>("get_workspace").then(setWs).catch(() => undefined);
+  }, []);
+  useEffect(() => {
+    reloadWs();
+  }, [reloadWs]);
+  // A team computer's join state changes when the central approves it.
+  useEffect(() => {
+    if (ws.joining) reloadWs();
+  }, [snap, ws.joining, reloadWs]);
 
   const changeRole = useCallback(
     async (r: Role) => {
       try {
         await invoke("set_role", { role: r });
-        setRoleState(r);
+        reloadWs();
       } catch (e) {
         toast("error", `Não foi possível salvar: ${e}`);
       }
     },
-    [toast],
+    [toast, reloadWs],
   );
 
   useEffect(() => {
@@ -171,6 +183,7 @@ function AppShell() {
   const screen = overview || view === "help" ? view : state;
 
   return (
+    <WorkspaceContext.Provider value={{ ws, reload: reloadWs }}>
     <RoleContext.Provider value={role}>
     <div className="shell">
       <Sidebar overview={overview} profile={profile} view={view} conflicts={nConflicts} onSelect={setView} onPreferences={() => setPrefs(true)} />
@@ -222,6 +235,7 @@ function AppShell() {
       </AnimatePresence>
     </div>
     </RoleContext.Provider>
+    </WorkspaceContext.Provider>
   );
 }
 

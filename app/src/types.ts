@@ -141,6 +141,24 @@ export type Role = "personal" | "hub" | "member";
 
 export interface Workspace {
   role: Role;
+  /** Team computer: the central it belongs to. */
+  hubId?: string;
+  hubName?: string;
+  /** Team computer waiting for the central to approve it. */
+  joining?: { code: string; originalName: string };
+}
+
+/** office invites on the central (main.rs Invites). */
+export interface Invites {
+  open: { code: string; expires: number; folders: string[] }[];
+  /** Pending device ID -> invite code it carries. */
+  matches: Record<string, string>;
+}
+
+export interface InvitePreview {
+  hubId: string;
+  hubName: string;
+  expires: number;
 }
 
 export type View = "overview" | "folders" | "computers" | "pending" | "help";

@@ -127,7 +127,8 @@ Depois disso é só usar: edite, crie e apague arquivos normalmente. Clique numa
 O TwinFolders também funciona com mais de dois computadores. Por exemplo, o Mac de quem coordena como **central** e os notebooks e PCs do time.
 
 1. Em **Preferências → Como você usa este computador**, escolha **Central do escritório** no computador principal e **Computador do time** nos outros.
-2. Conecte cada computador do time à central (o mesmo processo de colar o ID e aprovar).
+2. Na central, em **Computadores → Convidar um computador do time**, marque as pastas que ele vai receber e clique em **Gerar convite**. Mande o texto para a pessoa (vale 24 horas, uma vez só).
+   No computador do time: instale o TwinFolders, abra **Computadores**, cole o convite e clique em **Entrar no time**. Na central, o pedido aparece em Pendências marcado como **Convidado**: aprove, e as pastas escolhidas são oferecidas a ele. Pedidos **sem convite** ficam marcados para você desconfiar.
 3. Ao adicionar uma pasta, marque quais computadores a recebem. Depois, mude isso quando quiser em **⋯ → Compartilhar com…**.
 4. Em **Computadores**, a central vê cada computador: se está online, quando foi visto pela última vez, quais pastas recebe. Ali também dá para **desconectar** um computador; os arquivos que já estão nele ficam lá.
 

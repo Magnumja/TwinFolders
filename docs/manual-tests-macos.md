@@ -108,6 +108,15 @@ Valores de referência: label `dev.twinfolders.syncthing`; plist `~/Library/Laun
 - ☐ Desconectar um computador: some da lista e das pastas; os arquivos dele continuam lá.
 - ☐ Tailscale com um PC marcado com `tag:escritorio`: o Acesso remoto o reconhece.
 
+## Convite para o time (Fatia 9) — NÃO VERIFICADO
+
+- ☐ Central: Gerar convite com 1 pasta marcada; Copiar convite; a lista mostra o código e "vence em 24 h".
+- ☐ Computador do time: colar o convite mostra "Entrar no espaço de <central>" com o início do ID certo; Entrar no time.
+- ☐ Central: o pedido aparece como "Convidado · código", com o nome sem o código; aprovar oferece a pasta escolhida.
+- ☐ Computador do time: depois de aprovado, o nome volta ao normal e a tela "Esperando a central aprovar" some.
+- ☐ Usar o mesmo convite num terceiro computador: o pedido aparece como "Convite vencido ou já usado".
+- ☐ Computador do time tenta aprovar/aceitar algo de outro computador: o app recusa com a mensagem da central.
+
 ## 7. Resultados
 
 | Passo | Resultado | Observações |

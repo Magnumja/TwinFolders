@@ -28,7 +28,9 @@ import { AddDeviceForm, ConnectGuide, IdBlocks } from "./Guide";
 import { pairingStage } from "../lib/pairing";
 import { RemotePanel } from "./Remote";
 import { DeviceGrid, useRole } from "./Team";
+import { InvitePanel, JoinInvite, JoinWaiting, useWorkspace } from "./Invite";
 import { sharedWith } from "../lib/team";
+import { parseInviteTag } from "../lib/invite";
 import {
   Dot,
   Empty,
@@ -495,7 +497,7 @@ function SideCallouts({ overview, conflicts, go }: { overview: Overview; conflic
         <Callout key="c" tone="wait" icon={<IconAlert />} title={conflicts === 1 ? "Resolver 1 conflito" : `Resolver ${conflicts} conflitos`} text="O mesmo arquivo mudou em dois lugares. Nada foi perdido." onClick={() => go("pending")} />
       )}
       {pd.length > 0 && (
-        <Callout key="d" tone="busy" icon={<IconMonitor />} title={`${pd[0].name || shortId(pd[0].deviceId)} quer se conectar`} text="Aprove só se for um computador seu." onClick={() => go("pending")} />
+        <Callout key="d" tone="busy" icon={<IconMonitor />} title={`${parseInviteTag(pd[0].name).name || shortId(pd[0].deviceId)} quer se conectar`} text="Aprove só se for um computador seu." onClick={() => go("pending")} />
       )}
       {pf.length > 0 && (
         <Callout key="f" tone="busy" icon={<IconInbox />} title={`“${pf[0].label || pf[0].folderId}” espera por você`} text={`${name(pf[0].offeredBy)} quer compartilhar esta pasta.${pf.length > 1 ? ` E mais ${pf.length - 1}.` : ""}`} onClick={() => go("pending")} />
@@ -542,6 +544,7 @@ export function FoldersView({ overview, actions }: { overview: Overview; actions
 
 export function ComputersView({ overview, profile, actions }: { overview: Overview; profile: Profile | null; actions: Actions }) {
   const role = useRole();
+  const { ws } = useWorkspace();
   const stage = pairingStage(overview);
   const guided = stage !== "done" && stage !== "offline";
   const team = role === "hub" || overview.devices.length > 1;
@@ -555,7 +558,22 @@ export function ComputersView({ overview, profile, actions }: { overview: Overvi
     <div className="view">
       <Hero title={role === "hub" ? "Computadores do time" : "Seus computadores"} sub={sub} />
       {overview.devices.length > 0 && !team && <LinkCard overview={overview} profile={profile} />}
+      <JoinWaiting ws={ws} />
       {overview.devices.length > 0 && <DeviceGrid overview={overview} onChanged={actions.refresh} />}
+      {role === "hub" && <InvitePanel overview={overview} />}
+      {role !== "hub" && overview.devices.length === 0 && (
+        <section className="panel">
+          <div className="panel-head">
+            <div>
+              <h2>Recebeu um convite da central do escritório?</h2>
+              <p className="sub">Cole aqui o texto que começa com twinfolders-convite:. Este computador entra no time e só se conecta à central.</p>
+            </div>
+          </div>
+          <div className="invite-body">
+            <JoinInvite onJoined={actions.refresh} />
+          </div>
+        </section>
+      )}
       {role === "member" && overview.devices.length > 0 ? (
         <section className="panel add-panel">
           <div className="panel-head">
@@ -571,8 +589,8 @@ export function ComputersView({ overview, profile, actions }: { overview: Overvi
         <section className="panel add-panel">
           <div className="panel-head">
             <div>
-              <h2>{role === "hub" ? "Incluir um computador do time" : "Conectar outro computador"}</h2>
-              <p className="sub">Cole o ID do computador novo. Ele recebe um pedido e você aprova lá.</p>
+              <h2>{role === "hub" ? "Ou conecte pelo ID" : "Conectar outro computador"}</h2>
+              <p className="sub">{role === "hub" ? "Sem convite: cole o ID do computador do time e aprove o pedido nele." : "Cole o ID do computador novo. Ele recebe um pedido e você aprova lá."}</p>
             </div>
           </div>
           <div className="add-grid">
