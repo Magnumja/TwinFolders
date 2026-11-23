@@ -6,7 +6,7 @@ const invoke = vi.fn();
 vi.mock("@tauri-apps/api/core", () => ({ invoke: (...a: unknown[]) => invoke(...a) }));
 vi.mock("@tauri-apps/plugin-dialog", () => ({ open: async () => null, ask: async () => true }));
 
-const { InvitePanel, JoinInvite } = await import("./Invite");
+const { InviteCreator, OpenInvites, JoinInvite } = await import("./Invite");
 const { Pending } = await import("./Pending");
 const { RoleContext } = await import("./Team");
 
@@ -26,7 +26,7 @@ afterEach(() => {
   invoke.mockReset();
 });
 
-describe("InvitePanel", () => {
+describe("InviteCreator and OpenInvites", () => {
   it("creates an invite with the chosen folders and lists it", async () => {
     let open: { code: string; expires: number; folders: string[] }[] = [];
     invoke.mockImplementation(async (cmd: string, args?: { folders?: string[] }) => {
@@ -36,13 +36,14 @@ describe("InvitePanel", () => {
         return "twinfolders-convite:ABCDEF";
       }
     });
-    const ui = render(<InvitePanel overview={overview} />);
+    const ui = render(<InviteCreator overview={overview} />);
     fireEvent.click(ui.getByLabelText(/Projetos/));
     fireEvent.click(ui.getByRole("button", { name: "Gerar convite" }));
     await waitFor(() => expect(invoke).toHaveBeenCalledWith("create_invite", { folders: ["proj"] }));
     expect(((await ui.findByLabelText("Convite")) as HTMLTextAreaElement).value).toBe("twinfolders-convite:ABCDEF");
-    expect(await ui.findByText("K7Q2-9XPM")).toBeTruthy();
-    expect(ui.getByText(/vence em 23 h/)).toBeTruthy();
+    const list = render(<OpenInvites overview={overview} refreshKey={1} />);
+    expect(await list.findByText("K7Q2-9XPM")).toBeTruthy();
+    expect(list.getByText(/vence em 23 h/)).toBeTruthy();
   });
 });
 

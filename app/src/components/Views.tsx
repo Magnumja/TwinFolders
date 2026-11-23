@@ -1,5 +1,5 @@
 "use client";
-import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
+import { useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { ask } from "@tauri-apps/plugin-dialog";
 import { AnimatePresence, motion, useReducedMotion } from "motion/react";
@@ -24,24 +24,24 @@ import { useSafeMotion } from "../hooks/useSafeMotion";
 import { Conflicts } from "./Conflicts";
 import { Pending } from "./Pending";
 import { useToast } from "./Toasts";
-import { AddDeviceForm, ConnectGuide, IdBlocks } from "./Guide";
+import { ConnectGuide } from "./Guide";
 import { pairingStage } from "../lib/pairing";
 import { RemotePanel } from "./Remote";
-import { DeviceGrid, useRole } from "./Team";
-import { InvitePanel, JoinInvite, JoinWaiting, useWorkspace } from "./Invite";
-import { sharedWith } from "../lib/team";
+import { DeviceGrid, IdChip, TeamStrip, useRole } from "./Team";
+import { ActionMenu, type MenuItem } from "./Menu";
+import { ConnectDialog } from "./Connect";
+import { JoinInvite, JoinWaiting, OpenInvites, useWorkspace } from "./Invite";
+import { sharedWith, teamLine } from "../lib/team";
 import { parseInviteTag } from "../lib/invite";
 import {
   Dot,
   Empty,
   IconAlert,
-  IconCopy,
   IconFolder,
   IconInbox,
   IconLaptop,
   IconLock,
   IconMonitor,
-  IconMore,
   IconPlus,
   IconSearch,
   PressButton,
@@ -160,7 +160,6 @@ function peerOnline(d: DeviceView): { tone: "ok" | "wait" | "muted"; text: strin
 }
 
 export function LinkCard({ overview, profile }: { overview: Overview; profile: Profile | null }) {
-  const [copied, setCopied] = useState(false);
   const state = linkState(overview.devices);
   const summary = {
     flow: "Os dois estão trocando arquivos agora.",
@@ -168,15 +167,6 @@ export function LinkCard({ overview, profile }: { overview: Overview; profile: P
     off: overview.devices.some((d) => d.lastSeen) ? "O outro computador está desligado ou sem rede." : "Esperando o outro computador aprovar o pedido.",
     none: "Nenhum outro computador pareado ainda.",
   }[state];
-  const copy = async () => {
-    try {
-      await navigator.clipboard.writeText(overview.myId);
-      setCopied(true);
-      setTimeout(() => setCopied(false), 1600);
-    } catch {
-      // Clipboard unavailable: the full ID is in the button's tooltip.
-    }
-  };
   const os = osLabel(profile?.os ?? "");
   return (
     <section className={`panel link-card link-${state}`}>
@@ -203,9 +193,6 @@ export function LinkCard({ overview, profile }: { overview: Overview; profile: P
         <span className="foot-note">
           <IconLock /> {summary} A conexão é criptografada e não passa por nenhuma nuvem.
         </span>
-        <button className="link-btn" onClick={copy} title={`ID completo: ${overview.myId}`}>
-          <IconCopy /> {copied ? "ID copiado" : "Copiar meu ID"}
-        </button>
       </div>
     </section>
   );
@@ -251,54 +238,21 @@ function useFolderActions(f: FolderView, actions: Actions) {
   return { reveal, togglePause, remove };
 }
 
+/** Folder actions, grouped: open/share · history/ignores · pause/stop (last, red). */
 function RowMenu({ f, actions }: { f: FolderView; actions: Actions }) {
   const role = useRole();
-  const [open, setOpen] = useState(false);
-  const ref = useRef<HTMLDivElement>(null);
   const act = useFolderActions(f, actions);
-  useEffect(() => {
-    if (!open) return;
-    const close = (e: MouseEvent | KeyboardEvent) => {
-      if (e instanceof KeyboardEvent ? e.key === "Escape" : !ref.current?.contains(e.target as Node)) setOpen(false);
-    };
-    window.addEventListener("mousedown", close);
-    window.addEventListener("keydown", close);
-    return () => {
-      window.removeEventListener("mousedown", close);
-      window.removeEventListener("keydown", close);
-    };
-  }, [open]);
-  const run = (fn: () => void) => () => {
-    setOpen(false);
-    fn();
-  };
-  return (
-    <div className="row-menu" ref={ref}>
-      <button className="icon-btn" aria-label={`Mais ações para ${f.label}`} aria-haspopup="menu" aria-expanded={open} onClick={() => setOpen((o) => !o)}>
-        <IconMore />
-      </button>
-      <AnimatePresence>
-        {open && (
-          <motion.div
-            className="menu"
-            role="menu"
-            initial={{ opacity: 0, scale: motionTokens.scale.subtle, y: -4 }}
-            animate={{ opacity: 1, scale: 1, y: 0 }}
-            exit={{ opacity: 0, scale: motionTokens.scale.subtle, y: -4 }}
-            transition={springs.instant}
-          >
-            <button role="menuitem" onClick={run(act.reveal)}>Abrir no {navigator.userAgent.includes("Windows") ? "Explorer" : "Finder"}</button>
-            {role !== "member" && <button role="menuitem" onClick={run(() => actions.share(f))}>Compartilhar com…</button>}
-            <button role="menuitem" onClick={run(act.togglePause)}>{f.health.kind === "paused" ? "Retomar sincronização" : "Pausar sincronização"}</button>
-            <button role="menuitem" onClick={run(() => actions.versions(f))}>Histórico de versões</button>
-            <button role="menuitem" onClick={run(() => actions.ignores(f))}>Arquivos ignorados</button>
-            <hr />
-            <button role="menuitem" className="danger" onClick={run(act.remove)}>Parar de sincronizar</button>
-          </motion.div>
-        )}
-      </AnimatePresence>
-    </div>
+  const items: MenuItem[] = [{ label: `Abrir no ${navigator.userAgent.includes("Windows") ? "Explorer" : "Finder"}`, onSelect: act.reveal }];
+  if (role !== "member") items.push({ label: "Compartilhar com…", onSelect: () => actions.share(f) });
+  items.push(
+    "separator",
+    { label: "Histórico de versões", onSelect: () => actions.versions(f) },
+    { label: "Arquivos ignorados", onSelect: () => actions.ignores(f) },
+    "separator",
+    { label: f.health.kind === "paused" ? "Retomar sincronização" : "Pausar sincronização", onSelect: act.togglePause },
+    { label: "Parar de sincronizar", onSelect: act.remove, danger: true },
   );
+  return <ActionMenu label={`Mais ações para ${f.label}`} items={items} />;
 }
 
 function StatusCell({ f, onResume }: { f: FolderView; onResume: () => void }) {
@@ -337,9 +291,9 @@ function FolderRow({ f, actions, compact, devices }: { f: FolderView; actions: A
   return (
     <motion.div className="tr" role="row" layout="position" exit={{ opacity: 0, transition: { duration: motionTokens.duration.fast } }}>
       <span role="cell" className="cell-name">
-        <button className={`folder-icon tone-${h.tone}`} onClick={act.reveal} title="Abrir a pasta" aria-label={`Abrir ${f.label}`}>
+        <span className={`folder-icon tone-${h.tone}`} aria-hidden="true">
           <IconFolder />
-        </button>
+        </span>
         <span className="grow">
           <button className="name-btn ellipsis" onClick={act.reveal} title={`Abrir ${f.path}`}>{f.label}</button>
           <span className="sub ellipsis" title={f.path}>{devices && devices.length > 1 ? sharedWith(f, devices) : f.path}</span>
@@ -353,16 +307,13 @@ function FolderRow({ f, actions, compact, devices }: { f: FolderView; actions: A
       </span>
       {!compact && <span role="cell" className="col-when sub">{relativeTime(f.lastSync)}</span>}
       <span role="cell" className="cell-menu">
-        <span className="row-quick">
-          <button className="chip" onClick={() => actions.versions(f)}>Versões</button>
-        </span>
         <RowMenu f={f} actions={actions} />
       </span>
     </motion.div>
   );
 }
 
-export function FoldersTable({ folders, actions, limit, compact, title = "Suas pastas", devices }: { folders: FolderView[]; actions: Actions; limit?: number; compact?: boolean; title?: string; devices?: DeviceView[] }) {
+export function FoldersTable({ folders, actions, limit, compact, title = "Suas pastas", devices, bare }: { folders: FolderView[]; actions: Actions; limit?: number; compact?: boolean; title?: string; devices?: DeviceView[]; bare?: boolean }) {
   const [tab, setTab] = useState<FolderTab>("all");
   const [query, setQuery] = useState("");
   const syncing = folders.filter((f) => f.health.kind === "syncing" || f.health.kind === "scanning").length;
@@ -375,8 +326,8 @@ export function FoldersTable({ folders, actions, limit, compact, title = "Suas p
     { id: "upToDate", label: "Em dia" },
   ];
   return (
-    <section className="panel folders">
-      <div className="panel-head">
+    <section className="panel folders" aria-label={title}>
+      {!bare && <div className="panel-head">
         <div>
           <h2>{title}</h2>
           <p className="sub">{folderSummary(folders.length, bytes)}</p>
@@ -384,7 +335,7 @@ export function FoldersTable({ folders, actions, limit, compact, title = "Suas p
         {limit && folders.length > limit && (
           <button className="link-btn" onClick={() => actions.go("folders")}>Ver todas as {folders.length}</button>
         )}
-      </div>
+      </div>}
       {folders.length === 0 ? (
         <Empty
           icon={<IconFolder size={28} />}
@@ -517,7 +468,7 @@ export function OverviewView({ overview, profile, conflicts, actions }: { overvi
     <div className="view">
       <Hero title={h.title} sub={h.sub} action={overview.devices.some((d) => d.connected || d.lastSeen) ? <AddButton onClick={actions.add} /> : undefined} />
       <ConnectGuide overview={overview} onChanged={actions.refresh} onAddFolder={actions.add} go={actions.go} />
-      {overview.devices.length > 0 && (team ? <DeviceGrid overview={overview} onChanged={actions.refresh} /> : <LinkCard overview={overview} profile={profile} />)}
+      {overview.devices.length > 0 && (team ? <TeamStrip devices={overview.devices} onManage={() => actions.go("computers")} /> : <LinkCard overview={overview} profile={profile} />)}
       {overview.folders.length > 0 && <div className="split">
         <FoldersTable folders={overview.folders} actions={actions} limit={6} compact devices={overview.devices} />
         <div className="side">
@@ -531,37 +482,55 @@ export function OverviewView({ overview, profile, conflicts, actions }: { overvi
 
 export function FoldersView({ overview, actions }: { overview: Overview; actions: Actions }) {
   const role = useRole();
+  const summary = folderSummary(overview.folders.length, formatBytes(overview.folders.reduce((n, f) => n + f.globalBytes, 0)));
   const sub = overview.devices.length > 1 || role === "hub"
-    ? "Cada pasta fica igual em todos os computadores com quem ela é compartilhada. Use Compartilhar com… para escolher quem recebe."
-    : "Tudo o que fica igual nos dois computadores. Clique numa pasta para abri-la.";
+    ? `${summary}. Cada uma fica igual nos computadores com quem é compartilhada (⋯ → Compartilhar com…).`
+    : `${summary}. Tudo aqui fica igual nos dois computadores.`;
   return (
     <div className="view">
       <Hero title="Suas pastas" sub={sub} action={overview.devices.length > 0 ? <AddButton onClick={actions.add} /> : undefined} />
-      <FoldersTable folders={overview.folders} actions={actions} title="Todas as pastas" devices={overview.devices} />
+      <FoldersTable folders={overview.folders} actions={actions} title="Todas as pastas" devices={overview.devices} bare />
     </div>
   );
 }
 
-export function ComputersView({ overview, profile, actions }: { overview: Overview; profile: Profile | null; actions: Actions }) {
+export function ComputersView({ overview, actions }: { overview: Overview; profile?: Profile | null; actions: Actions }) {
   const role = useRole();
   const { ws } = useWorkspace();
+  const [connecting, setConnecting] = useState(false);
+  const [invitesKey, setInvitesKey] = useState(0);
   const stage = pairingStage(overview);
   const guided = stage !== "done" && stage !== "offline";
-  const team = role === "hub" || overview.devices.length > 1;
+  const line = overview.devices.length > 0 ? ` ${teamLine(overview.devices)}` : "";
   const sub =
     role === "hub"
-      ? "Os computadores do time conectados a esta central. Para incluir mais um, cole o ID dele aqui."
+      ? `Os computadores do time ligados a esta central.${line}`
       : role === "member"
-        ? "Este computador fala só com a central do escritório."
-        : "Os aparelhos que fazem parte do seu espaço. Para conectar um novo, cole o ID dele aqui.";
+        ? `Este computador fala só com a central do escritório.${line}`
+        : `Os aparelhos que fazem parte do seu espaço.${line}`;
+  // One place for this computer's ID and one way in (the dialog). Team
+  // members don't bring in computers; first-time pairing keeps its guide.
+  const headerActions = (
+    <div className="hero-actions">
+      <IdChip id={overview.myId} />
+      {role !== "member" && !guided && (
+        <PressButton className="btn btn-primary" onClick={() => setConnecting(true)}>
+          <IconPlus /> {role === "hub" ? "Convidar computador" : "Conectar computador"}
+        </PressButton>
+      )}
+    </div>
+  );
+  const changed = () => {
+    setInvitesKey((k) => k + 1);
+    actions.refresh();
+  };
   return (
     <div className="view">
-      <Hero title={role === "hub" ? "Computadores do time" : "Seus computadores"} sub={sub} />
-      {overview.devices.length > 0 && !team && <LinkCard overview={overview} profile={profile} />}
+      <Hero title={role === "hub" ? "Computadores do time" : "Seus computadores"} sub={sub} action={headerActions} />
       <JoinWaiting ws={ws} />
       {overview.devices.length > 0 && <DeviceGrid overview={overview} onChanged={actions.refresh} />}
-      {role === "hub" && <InvitePanel overview={overview} />}
-      {role !== "hub" && overview.devices.length === 0 && (
+      {guided && role !== "member" && <ConnectGuide overview={overview} onChanged={actions.refresh} onAddFolder={actions.add} go={actions.go} />}
+      {role !== "hub" && overview.devices.length === 0 && !guided && (
         <section className="panel">
           <div className="panel-head">
             <div>
@@ -574,36 +543,14 @@ export function ComputersView({ overview, profile, actions }: { overview: Overvi
           </div>
         </section>
       )}
-      {role === "member" && overview.devices.length > 0 ? (
-        <section className="panel add-panel">
-          <div className="panel-head">
-            <div>
-              <h2>Ligado à central</h2>
-              <p className="sub">Novos computadores são incluídos pela central do escritório. Se precisar trocar de central, mude o papel deste computador em Preferências.</p>
-            </div>
-          </div>
-        </section>
-      ) : guided ? (
-        <ConnectGuide overview={overview} onChanged={actions.refresh} onAddFolder={actions.add} go={actions.go} />
-      ) : (
-        <section className="panel add-panel">
-          <div className="panel-head">
-            <div>
-              <h2>{role === "hub" ? "Ou conecte pelo ID" : "Conectar outro computador"}</h2>
-              <p className="sub">{role === "hub" ? "Sem convite: cole o ID do computador do time e aprove o pedido nele." : "Cole o ID do computador novo. Ele recebe um pedido e você aprova lá."}</p>
-            </div>
-          </div>
-          <div className="add-grid">
-            <AddDeviceForm onDone={actions.refresh} />
-            <div className="my-id">
-              <p className="field-label">ID deste computador</p>
-              <IdBlocks id={overview.myId} />
-              <p className="sub">Para conectar pelo outro lado, cole este ID lá. Quem receber o pedido confere o primeiro bloco ({overview.myId.split("-")[0]}) e aprova.</p>
-            </div>
-          </div>
-        </section>
+      {role === "member" && overview.devices.length > 0 && !ws.joining && (
+        <p className="sub view-note">Novos computadores são incluídos pela central. Para trocar de central, mude o papel deste computador em Preferências.</p>
       )}
+      {role === "hub" && <OpenInvites overview={overview} refreshKey={invitesKey} />}
       {overview.devices.length > 0 && <RemotePanel />}
+      <AnimatePresence>
+        {connecting && <ConnectDialog key="connect" overview={overview} onClose={() => setConnecting(false)} onChanged={changed} />}
+      </AnimatePresence>
     </div>
   );
 }

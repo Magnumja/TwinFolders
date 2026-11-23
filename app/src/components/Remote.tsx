@@ -22,7 +22,6 @@ const USER_OK = /^[A-Za-z0-9._][A-Za-z0-9._-]{0,63}$/;
 
 function Machine({ m, onSaved }: { m: RemoteMachine; onSaved: () => void }) {
   const [user, setUser] = useState(m.user);
-  const [busy, setBusy] = useState(false);
   const toast = useToast();
   useEffect(() => setUser(m.user), [m.user]);
   const valid = USER_OK.test(user.trim());
@@ -34,17 +33,6 @@ function Machine({ m, onSaved }: { m: RemoteMachine; onSaved: () => void }) {
       onSaved();
     } catch (e) {
       toast("error", String(e));
-    }
-  };
-  const open = async () => {
-    setBusy(true);
-    try {
-      await save();
-      await invoke("open_terminal", { deviceId: m.deviceId });
-    } catch (e) {
-      toast("error", String(e));
-    } finally {
-      setBusy(false);
     }
   };
 
@@ -75,9 +63,6 @@ function Machine({ m, onSaved }: { m: RemoteMachine; onSaved: () => void }) {
           aria-invalid={!valid}
         />
       </label>
-      <button className="btn btn-primary" onClick={open} disabled={busy || !m.host || !valid} title={m.host ? `ssh ${user}@${m.host}` : undefined}>
-        {busy ? "Abrindo…" : "Abrir terminal"}
-      </button>
     </div>
   );
 }
@@ -102,8 +87,8 @@ export function RemotePanel() {
     <section className="panel remote">
       <div className="panel-head">
         <div>
-          <h2>Acesso remoto</h2>
-          <p className="sub">Abra um terminal no outro computador, de qualquer lugar, pela conexão privada do Tailscale.</p>
+          <h2>Acesso remoto (SSH)</h2>
+          <p className="sub">Configure o usuário de cada computador. O terminal abre pelo menu ⋯ do cartão dele, de qualquer lugar, pela conexão privada do Tailscale.</p>
         </div>
         <button className="link-btn" onClick={load}>Verificar de novo</button>
       </div>
@@ -133,7 +118,7 @@ export function RemotePanel() {
           <li>
             Rode de novo em cada um, passando a linha do outro: no Mac com a chave do PC entre aspas; no Windows com <code>-OtherKey "…"</code>. Isso autoriza a chave, desliga o login por senha e, no Windows, libera a porta só para o Tailscale.
           </li>
-          <li>Volte aqui e clique em Abrir terminal. O usuário é o nome da sua conta no outro computador.</li>
+          <li>Confira aqui o usuário (o nome da sua conta no outro computador) e use <b>⋯ → Abrir terminal</b> no cartão dele.</li>
         </ol>
       </details>
     </section>

@@ -1,6 +1,8 @@
 "use client";
 import { createContext, useCallback, useContext, useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { AnimatePresence, motion } from "motion/react";
+import { springs } from "../lib/motion-tokens";
 import type { InvitePreview, Invites, Overview, Workspace } from "../types";
 import { expiresIn, looksLikeInvite } from "../lib/invite";
 import { useToast } from "./Toasts";
@@ -28,15 +30,9 @@ export function useInvites(overview: Overview | null, enabled: boolean): Invites
   return inv;
 }
 
-/** Central: create a one-time invite for a team computer. */
-export function InvitePanel({ overview }: { overview: Overview }) {
-  const [folders, setFolders] = useState<string[]>([]);
-  const [text, setText] = useState<string | null>(null);
-  const [copied, setCopied] = useState(false);
-  const [busy, setBusy] = useState(false);
+/** Open invites (central), shared by the creator and the list below the computers. */
+function useOpenInvites() {
   const [open, setOpen] = useState<Invites["open"]>([]);
-  const toast = useToast();
-
   const load = useCallback(async () => {
     try {
       setOpen((await invoke<Invites>("list_invites")).open);
@@ -47,13 +43,23 @@ export function InvitePanel({ overview }: { overview: Overview }) {
   useEffect(() => {
     load();
   }, [load]);
+  return { open, load };
+}
+
+/** Central: create a one-time invite for a team computer (inside the Connect dialog). */
+export function InviteCreator({ overview, onCreated }: { overview: Overview; onCreated?: () => void }) {
+  const [folders, setFolders] = useState<string[]>([]);
+  const [text, setText] = useState<string | null>(null);
+  const [copied, setCopied] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const toast = useToast();
 
   const create = async () => {
     setBusy(true);
     try {
       setText(await invoke<string>("create_invite", { folders }));
       setCopied(false);
-      load();
+      onCreated?.();
     } catch (e) {
       toast("error", String(e));
     } finally {
@@ -69,64 +75,80 @@ export function InvitePanel({ overview }: { overview: Overview }) {
       // The text is selectable right there.
     }
   };
+  const toggle = (id: string) => setFolders((fs) => (fs.includes(id) ? fs.filter((x) => x !== id) : [...fs, id]));
+
+  return (
+    <div className="invite-body flush">
+      <p className="sub">Gere um convite e mande para a pessoa (mensagem ou e-mail). Ela cola no TwinFolders do computador dela. Vale 24 horas e só serve uma vez.</p>
+      {overview.folders.length > 0 && (
+        <div className="field">
+          <span className="field-label">Pastas que esse computador vai receber (pode mudar depois)</span>
+          <div className="chips">
+            {overview.folders.map((f) => (
+              <label key={f.id} className={folders.includes(f.id) ? "chip-check on" : "chip-check"}>
+                <input type="checkbox" checked={folders.includes(f.id)} onChange={() => toggle(f.id)} /> {f.label}
+              </label>
+            ))}
+          </div>
+        </div>
+      )}
+      <div className="actions start">
+        <button className="btn btn-primary" onClick={create} disabled={busy}>{busy ? "Gerando…" : text ? "Gerar outro convite" : "Gerar convite"}</button>
+      </div>
+      <AnimatePresence initial={false}>
+        {text && (
+          <motion.div key={text} className="invite-text" initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }} transition={springs.gentle}>
+            <textarea readOnly rows={3} value={text} aria-label="Convite" onFocus={(e) => e.currentTarget.select()} />
+            <div className="row">
+              <button className="btn" onClick={copy}><IconCopy /> {copied ? "Convite copiado" : "Copiar convite"}</button>
+              <span className="sub small">O pedido chega em Pendências marcado como <b>convidado</b>.</span>
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+    </div>
+  );
+}
+
+/** Central: the invites still valid, with Cancel. Nothing when there are none. */
+export function OpenInvites({ overview, refreshKey }: { overview: Overview; refreshKey: number }) {
+  const { open, load } = useOpenInvites();
+  const toast = useToast();
+  useEffect(() => {
+    load();
+  }, [load, refreshKey]);
   const cancel = async (code: string) => {
     try {
       await invoke("cancel_invite", { code });
-      if (text?.includes(code)) setText(null);
       load();
     } catch (e) {
       toast("error", String(e));
     }
   };
   const label = (id: string) => overview.folders.find((f) => f.id === id)?.label ?? id;
-  const toggle = (id: string) => setFolders((fs) => (fs.includes(id) ? fs.filter((x) => x !== id) : [...fs, id]));
-
+  if (open.length === 0) return null;
   return (
-    <section className="panel invite-panel">
+    <section className="panel">
       <div className="panel-head">
         <div>
-          <h2>Convidar um computador do time</h2>
-          <p className="sub">Gere um convite e mande para a pessoa (mensagem ou e-mail). Ela cola no TwinFolders do computador dela. O convite vale 24 horas e só serve uma vez.</p>
+          <h2>Convites abertos</h2>
+          <p className="sub">Ainda não usados. Cancele um se ele foi para a pessoa errada.</p>
         </div>
       </div>
       <div className="invite-body">
-        {overview.folders.length > 0 && (
-          <div className="field">
-            <span className="field-label">Pastas que esse computador vai receber (pode mudar depois)</span>
-            <div className="chips">
-              {overview.folders.map((f) => (
-                <label key={f.id} className={folders.includes(f.id) ? "chip-check on" : "chip-check"}>
-                  <input type="checkbox" checked={folders.includes(f.id)} onChange={() => toggle(f.id)} /> {f.label}
-                </label>
-              ))}
-            </div>
-          </div>
-        )}
-        <div className="actions start">
-          <button className="btn btn-primary" onClick={create} disabled={busy}>{busy ? "Gerando…" : text ? "Gerar outro convite" : "Gerar convite"}</button>
-        </div>
-        {text && (
-          <div className="invite-text">
-            <textarea readOnly rows={3} value={text} aria-label="Convite" onFocus={(e) => e.currentTarget.select()} />
-            <div className="row">
-              <button className="btn" onClick={copy}><IconCopy /> {copied ? "Convite copiado" : "Copiar convite"}</button>
-              <span className="sub small">Quando o pedido chegar, ele aparece em Pendências marcado como <b>convidado</b>.</span>
-            </div>
-          </div>
-        )}
-        {open.length > 0 && (
-          <ul className="open-invites">
-            {open.map((i) => (
-              <li key={i.code}>
-                <span className="grow">
-                  Convite <b>{i.code}</b> · {expiresIn(i.expires)}
-                  {i.folders.length > 0 && <span className="sub"> · {i.folders.map(label).join(", ")}</span>}
-                </span>
-                <button className="link-btn danger" onClick={() => cancel(i.code)}>Cancelar</button>
-              </li>
-            ))}
-          </ul>
-        )}
+      <ul className="open-invites">
+        <AnimatePresence initial={false}>
+          {open.map((i) => (
+            <motion.li key={i.code} layout exit={{ opacity: 0 }} transition={springs.snappy}>
+              <span className="grow">
+                Convite <b>{i.code}</b> · {expiresIn(i.expires)}
+                {i.folders.length > 0 && <span className="sub"> · {i.folders.map(label).join(", ")}</span>}
+              </span>
+              <button className="link-btn danger" onClick={() => cancel(i.code)}>Cancelar</button>
+            </motion.li>
+          ))}
+        </AnimatePresence>
+      </ul>
       </div>
     </section>
   );

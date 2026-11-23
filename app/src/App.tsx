@@ -188,7 +188,7 @@ function AppShell() {
     <div className="shell">
       <Sidebar overview={overview} profile={profile} view={view} conflicts={nConflicts} onSelect={setView} onPreferences={() => setPrefs(true)} />
       <div className="main-col">
-        <Topbar view={view} profile={profile} onRefresh={refreshAll} />
+        <Topbar view={view} onRefresh={refreshAll} />
         <main>
           <AnimatePresence mode="wait" initial={false}>
             <motion.div

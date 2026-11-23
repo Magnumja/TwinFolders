@@ -19,7 +19,7 @@ export const VIEW_TITLE: Record<View, string> = {
   folders: "Pastas",
   computers: "Computadores",
   pending: "Pendências",
-  help: "Como funciona",
+  help: "Ajuda",
 };
 
 function NavItem({
@@ -93,7 +93,6 @@ export function Sidebar({
           <NavItem view="folders" current={view} icon={<IconFolder />} count={overview?.folders.length} onSelect={onSelect} />
           <NavItem view="computers" current={view} icon={<IconMonitor />} count={overview?.devices.length} onSelect={onSelect} />
           <NavItem view="pending" current={view} icon={<IconInbox />} count={pending} alert onSelect={onSelect} />
-          <NavItem view="help" current={view} icon={<IconHelp />} onSelect={onSelect} />
         </ul>
       </nav>
 
@@ -103,6 +102,9 @@ export function Sidebar({
           <strong>Só entre seus computadores.</strong>
           <span>Seus arquivos viajam direto. Sem nuvem de terceiros.</span>
         </div>
+        <ul className="nav">
+          <NavItem view="help" current={view} icon={<IconHelp />} onSelect={onSelect} />
+        </ul>
         <button className="nav-item" onClick={onPreferences}>
           <span className="nav-icon"><IconGear /></span>
           <span className="nav-label">Preferências</span>
@@ -120,7 +122,7 @@ export function Sidebar({
   );
 }
 
-export function Topbar({ view, profile, onRefresh }: { view: View; profile: Profile | null; onRefresh: () => Promise<void> }) {
+export function Topbar({ view, onRefresh }: { view: View; onRefresh: () => Promise<void> }) {
   const [spinning, setSpinning] = useState(false);
   const m = useSafeMotion();
   const refresh = async () => {
@@ -148,7 +150,6 @@ export function Topbar({ view, profile, onRefresh }: { view: View; profile: Prof
           <IconRefresh />
         </motion.span>
       </button>
-      <span className="avatar small" title={displayName(profile?.user ?? "")}>{initial(profile?.user ?? "")}</span>
     </div>
   );
 }

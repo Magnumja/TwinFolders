@@ -46,20 +46,22 @@ describe("DeviceGrid", () => {
         <DeviceGrid overview={overview} onChanged={onChanged} />
       </RoleContext.Provider>,
     );
-    expect(ui.getByText("Computadores do time")).toBeTruthy();
-    expect(ui.getByText("2 de 3 conectados agora.")).toBeTruthy();
+    expect(ui.getByRole("region", { name: "Computadores do time" })).toBeTruthy();
     expect(ui.getByText("Pasta: Projetos")).toBeTruthy();
-    fireEvent.click(ui.getAllByRole("button", { name: "Desconectar" })[1]);
+    fireEvent.click(ui.getByRole("button", { name: "Ações para note-2" }));
+    fireEvent.click(ui.getByRole("menuitem", { name: "Desconectar" }));
     await waitFor(() => expect(invoke).toHaveBeenCalledWith("remove_device", { deviceId: "B" }));
     await waitFor(() => expect(onChanged).toHaveBeenCalled());
   });
 
-  it("a team member cannot disconnect computers", () => {
+  it("a team member cannot disconnect computers, but can open a terminal", () => {
     const ui = render(
       <RoleContext.Provider value="member">
         <DeviceGrid overview={overview} onChanged={() => {}} />
       </RoleContext.Provider>,
     );
-    expect(ui.queryByRole("button", { name: "Desconectar" })).toBeNull();
+    fireEvent.click(ui.getByRole("button", { name: "Ações para note-1" }));
+    expect(ui.getByRole("menuitem", { name: "Abrir terminal" })).toBeTruthy();
+    expect(ui.queryByRole("menuitem", { name: "Desconectar" })).toBeNull();
   });
 });

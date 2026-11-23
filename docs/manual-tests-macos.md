@@ -88,7 +88,7 @@ Valores de referência: label `dev.twinfolders.syncthing`; plist `~/Library/Laun
 - ☐ `./scripts/ssh-setup-mac.sh` cria a chave e mostra a linha `ssh-ed25519 …`.
 - ☐ Rodar de novo com a chave do outro: termina em "Pronto"; repetir mostra "já estava autorizada".
 - ☐ Do outro computador, `ssh usuario@nome-no-tailscale` entra sem pedir senha; com outra chave (ou `-o PubkeyAuthentication=no`) é recusado (senha desligada).
-- ☐ No app, Computadores → Acesso remoto mostra "Pronto em …" e "Abrir terminal" abre o terminal já conectado.
+- ☐ No app, Computadores → Acesso remoto mostra "Pronto em …" e "⋯ → Abrir terminal" no cartão do computador abre o terminal já conectado.
 - ☐ Desfazer (`--undo` / `-Undo`) volta ao estado anterior.
 
 ## Instalador e primeira abertura (Fatia 7) — NÃO VERIFICADO

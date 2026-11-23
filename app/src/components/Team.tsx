@@ -2,16 +2,17 @@
 import { createContext, useContext, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { ask } from "@tauri-apps/plugin-dialog";
-import { motion } from "motion/react";
+import { AnimatePresence, motion } from "motion/react";
 import type { DeviceView, FolderView, Overview, Role } from "../types";
-import { formatRate, relativeTime, shortId } from "../lib/format";
+import { relativeTime, shortId } from "../lib/format";
 import { connectionKind } from "../lib/space";
 import { ROLE_LABEL, deviceName, foldersByDevice, teamLine, validSelection } from "../lib/team";
 import { staggerContainer, useSafeMotion } from "../hooks/useSafeMotion";
 import { springs } from "../lib/motion-tokens";
 import { Modal } from "./Modal";
 import { useToast } from "./Toasts";
-import { Dot, IconLaptop, IconMonitor } from "./ui";
+import { Dot, IconCopy, IconLaptop, IconMonitor, SwapText } from "./ui";
+import { ActionMenu, type MenuItem } from "./Menu";
 
 /** This computer's role, loaded once by the shell. */
 export const RoleContext = createContext<Role>("personal");
@@ -94,7 +95,8 @@ export function ShareEditor({ folder, devices, onClose, onSaved }: { folder: Fol
   );
 }
 
-/** Every paired computer with its state and folders; disconnect from here. */
+/** Every paired computer with its state and folders. Actions (terminal,
+ * disconnect) live in each card's ⋯ menu, destructive last. */
 export function DeviceGrid({ overview, onChanged }: { overview: Overview; onChanged: () => void }) {
   const role = useRole();
   const toast = useToast();
@@ -116,42 +118,93 @@ export function DeviceGrid({ overview, onChanged }: { overview: Overview; onChan
       onChanged();
     }
   };
+  const terminal = async (d: DeviceView) => {
+    try {
+      await invoke("open_terminal", { deviceId: d.id });
+    } catch (e) {
+      toast("error", String(e));
+    }
+  };
   return (
-    <section className="panel devices">
-      <div className="panel-head">
-        <div>
-          <h2>{role === "hub" ? "Computadores do time" : "Computadores conectados"}</h2>
-          <p className="sub">{teamLine(overview.devices)}</p>
-        </div>
-      </div>
+    <section className="panel devices" aria-label={role === "hub" ? "Computadores do time" : "Computadores conectados"}>
       <motion.div className="device-grid" variants={staggerContainer} initial="hidden" animate="visible">
-        {overview.devices.map((d) => {
-          const s = state(d);
-          const folders = byDevice.get(d.id) ?? [];
-          const rate = d.inRate + d.outRate;
-          return (
-            <motion.article key={d.id} className="device-card" variants={{ hidden: m.initial, visible: { ...m.animate, transition: m.reduce ? m.fade : springs.snappy } }}>
-              <div className="device-top">
-                <span className="machine-icon small-icon">{/mac|book/i.test(d.name) ? <IconLaptop size={20} /> : <IconMonitor size={20} />}</span>
-                <span className="grow">
-                  <strong className="ellipsis block" title={d.id}>{deviceName(d, d.id)}</strong>
-                  <span className={`small state-${s.tone}`}><Dot tone={s.tone} /> {s.text}</span>
-                </span>
-              </div>
-              <p className="sub device-folders">
-                {folders.length === 0 ? "Nenhuma pasta compartilhada" : folders.length === 1 ? `Pasta: ${folders[0].label}` : `${folders.length} pastas: ${folders.slice(0, 3).map((f) => f.label).join(", ")}${folders.length > 3 ? "…" : ""}`}
-              </p>
-              <div className="device-foot">
-                <span className="sub small">{rate >= 1 ? `Trocando ${formatRate(rate)}` : `ID ${shortId(d.id)}`}</span>
-                {role !== "member" && (
-                  <button className="link-btn danger" onClick={() => remove(d)}>Desconectar</button>
-                )}
-              </div>
-            </motion.article>
-          );
-        })}
+        <AnimatePresence mode="popLayout" initial={false}>
+          {overview.devices.map((d) => {
+            const s = state(d);
+            const folders = byDevice.get(d.id) ?? [];
+            const items: MenuItem[] = [{ label: "Abrir terminal", onSelect: () => terminal(d) }];
+            if (role !== "member") items.push("separator", { label: "Desconectar", onSelect: () => remove(d), danger: true });
+            return (
+              <motion.article
+                key={d.id}
+                layout
+                className="device-card"
+                variants={{ hidden: m.initial, visible: { ...m.animate, transition: m.reduce ? m.fade : springs.snappy } }}
+                exit={{ opacity: 0, scale: m.reduce ? 1 : 0.98, transition: m.fade }}
+              >
+                <div className="device-top">
+                  <span className="machine-icon small-icon">{/mac|book/i.test(d.name) ? <IconLaptop size={20} /> : <IconMonitor size={20} />}</span>
+                  <span className="grow">
+                    <strong className="ellipsis block" title={d.id}>{deviceName(d, d.id)}</strong>
+                    <span className={`small state-${s.tone}`}><Dot tone={s.tone} /> {s.text}</span>
+                  </span>
+                  <ActionMenu label={`Ações para ${deviceName(d, d.id)}`} items={items} />
+                </div>
+                <p className="sub device-folders">
+                  {folders.length === 0 ? "Nenhuma pasta compartilhada" : folders.length === 1 ? `Pasta: ${folders[0].label}` : `${folders.length} pastas: ${folders.slice(0, 3).map((f) => f.label).join(", ")}${folders.length > 3 ? "…" : ""}`}
+                </p>
+                <span className="sub small">ID {shortId(d.id)}</span>
+              </motion.article>
+            );
+          })}
+        </AnimatePresence>
       </motion.div>
     </section>
+  );
+}
+
+/** Overview: one line about the computers, no actions besides going to manage them. */
+export function TeamStrip({ devices, onManage }: { devices: DeviceView[]; onManage: () => void }) {
+  const role = useRole();
+  const line = teamLine(devices);
+  return (
+    <section className="panel team-strip" aria-label="Computadores">
+      <strong>{role === "hub" ? "Computadores do time" : "Computadores"}</strong>
+      <span className="sub"><SwapText swapKey={line}>{line}</SwapText></span>
+      <ul className="team-chips">
+        {devices.map((d) => {
+          const s = state(d);
+          return (
+            <li key={d.id} className="team-chip" title={s.text}>
+              <Dot tone={s.tone} /> {deviceName(d, d.id)}
+              {s.tone !== "ok" && <span className="sub"> · {s.text.toLowerCase()}</span>}
+            </li>
+          );
+        })}
+      </ul>
+      <button className="link-btn" onClick={onManage}>Gerenciar →</button>
+    </section>
+  );
+}
+
+/** This computer's ID, shown once (Computers header) with copy. */
+export function IdChip({ id }: { id: string }) {
+  const [copied, setCopied] = useState(false);
+  const copy = async () => {
+    try {
+      await navigator.clipboard.writeText(id);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1600);
+    } catch {
+      // The full ID is in the tooltip.
+    }
+  };
+  return (
+    <button className="id-chip" onClick={copy} title={`ID completo: ${id}`}>
+      <span className="sub small">Meu ID</span>
+      <strong>{id.split("-")[0]}</strong>
+      <SwapText swapKey={copied ? "ok" : "copy"} className="id-chip-icon">{copied ? "✓" : <IconCopy />}</SwapText>
+    </button>
   );
 }
 
