@@ -32,7 +32,7 @@ Roteiro para instalar o TwinFolders num escritório: o computador de quem coorde
 8. Confira **Preferências → Segurança deste computador**: o BitLocker (ou Criptografia do dispositivo) precisa estar ligado.
 9. Opcional, para acesso remoto, como administrador, na pasta do TwinFolders:
    - Terminal: `scripts\ssh-setup-windows.ps1` (ver [README › Acesso por SSH](../README.md#acesso-por-ssh-opcional)).
-   - Ver a tela (só no Windows Pro): `scripts\remote-desktop-windows.ps1`. A porta só abre para o Tailscale, e a senha é pedida antes de conectar.
+   - Ver a tela (só no Windows Pro): `scripts\remote-desktop-windows.ps1 -Central <IP do Tailscale da central>`. A porta só abre na placa do Tailscale e só para a central, e a senha é pedida antes de conectar.
 
 ## 3. Fechar a rede
 

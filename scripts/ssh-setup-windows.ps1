@@ -18,6 +18,15 @@ function Say($t)  { Write-Host "`n$t" -ForegroundColor White }
 function Info($t) { Write-Host "  $t" }
 function Die($t)  { Write-Host "`nErro: $t" -ForegroundColor Red; exit 1 }
 
+# The Tailscale adapter. Rules are bound to it, not only to Tailscale's
+# address range: 100.64.0.0/10 is also used by some internet providers
+# (CGNAT), so an address match alone could let the provider's network in.
+function Get-TailscaleAlias {
+  $a = Get-NetAdapter -ErrorAction SilentlyContinue | Where-Object { $_.InterfaceDescription -like "Tailscale*" -or $_.Name -like "Tailscale*" } | Select-Object -First 1
+  if (-not $a) { Die "o Tailscale não está instalado ou conectado neste PC. Instale, entre na conta e rode de novo." }
+  $a.Name
+}
+
 $isAdmin = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
 $sshDir   = Join-Path $env:USERPROFILE ".ssh"
 $key      = Join-Path $sshDir "id_ed25519"
@@ -77,7 +86,7 @@ try {
   Get-NetFirewallRule -Name "OpenSSH-Server-In-TCP" -ErrorAction SilentlyContinue | Disable-NetFirewallRule
   Get-NetFirewallRule -Name $rule -ErrorAction SilentlyContinue | Remove-NetFirewallRule
   New-NetFirewallRule -Name $rule -DisplayName "TwinFolders SSH (Tailscale)" -Direction Inbound -Protocol TCP -LocalPort 22 `
-    -RemoteAddress "100.64.0.0/10", "fd7a:115c:a1e0::/48" -Action Allow | Out-Null
+    -InterfaceAlias (Get-TailscaleAlias) -RemoteAddress "100.64.0.0/10", "fd7a:115c:a1e0::/48" -Action Allow | Out-Null
   Info "A regra padrão do OpenSSH (qualquer rede) foi desativada; só endereços do Tailscale entram."
 
   Say "4/5 · Autorizando a chave do outro computador"
