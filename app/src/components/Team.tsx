@@ -125,6 +125,13 @@ export function DeviceGrid({ overview, onChanged }: { overview: Overview; onChan
       toast("error", String(e));
     }
   };
+  const screen = async (d: DeviceView) => {
+    try {
+      await invoke("open_screen", { deviceId: d.id });
+    } catch (e) {
+      toast("error", String(e));
+    }
+  };
   return (
     <section className="panel devices" aria-label={role === "hub" ? "Computadores do time" : "Computadores conectados"}>
       <motion.div className="device-grid" variants={staggerContainer} initial="hidden" animate="visible">
@@ -132,7 +139,10 @@ export function DeviceGrid({ overview, onChanged }: { overview: Overview; onChan
           {overview.devices.map((d) => {
             const s = state(d);
             const folders = byDevice.get(d.id) ?? [];
-            const items: MenuItem[] = [{ label: "Abrir terminal", onSelect: () => terminal(d) }];
+            const items: MenuItem[] = [
+              { label: "Ver a tela", onSelect: () => screen(d) },
+              { label: "Abrir terminal", onSelect: () => terminal(d) },
+            ];
             if (role !== "member") items.push("separator", { label: "Desconectar", onSelect: () => remove(d), danger: true });
             return (
               <motion.article

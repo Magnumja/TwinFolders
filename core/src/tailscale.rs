@@ -168,6 +168,55 @@ pub fn terminal_command(target: &str) -> Result<(String, Vec<String>), String> {
     setup::terminal_command(&["ssh", target])
 }
 
+/// How to show another computer's screen from this one.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Screen {
+    /// Write this Remote Desktop file and open it (macOS: Windows App).
+    RdpFile { name: String, contents: String },
+    /// Run this program with these arguments.
+    Command { program: String, args: Vec<String> },
+}
+
+/// Remote screen for a peer: Remote Desktop to Windows (needs Windows Pro
+/// with Remote Desktop on), Screen Sharing (VNC) to a Mac. `host` and
+/// `user` are validated here, so nothing else reaches a command line or
+/// the `.rdp` file. `local_os` / `peer_os` as in `std::env::consts::OS`
+/// and Tailscale's `OS` field (`windows`, `macOS`, `linux`).
+pub fn screen_command(
+    local_os: &str,
+    peer_os: &str,
+    host: &str,
+    user: &str,
+) -> Result<Screen, String> {
+    if !valid_host(host) {
+        return Err(format!("endereço inválido: {host}"));
+    }
+    if !valid_user(user) {
+        return Err("nome de usuário inválido: use só letras, números, ponto, _ ou -".into());
+    }
+    match (local_os, peer_os.to_ascii_lowercase().as_str()) {
+        ("macos", "windows") => Ok(Screen::RdpFile {
+            name: format!("twinfolders-{}.rdp", host.split('.').next().unwrap_or(host)),
+            // NLA on (credentials asked before connecting) and a warning if
+            // the server's identity cannot be verified.
+            contents: format!(
+                "full address:s:{host}\r\nusername:s:{user}\r\nprompt for credentials:i:1\r\nauthentication level:i:2\r\nenablecredsspsupport:i:1\r\n"
+            ),
+        }),
+        ("windows", "windows") => Ok(Screen::Command {
+            program: "mstsc".into(),
+            args: vec![format!("/v:{host}")],
+        }),
+        ("macos", "macos") => Ok(Screen::Command {
+            program: "open".into(),
+            args: vec![format!("vnc://{user}@{host}")],
+        }),
+        ("windows", "macos") => Err("ver a tela de um Mac a partir do Windows precisa de um programa de VNC (por exemplo, o RealVNC Viewer). Use o terminal, ou abra a central pelo próprio Mac.".into()),
+        (_, "") => Err("o sistema do outro computador não aparece no Tailscale".into()),
+        (_, other) => Err(format!("ver a tela de um computador {other} ainda não é suportado")),
+    }
+}
+
 /// Host names/IPs safe to put in a terminal command line.
 pub fn valid_host(h: &str) -> bool {
     !h.is_empty()
@@ -366,6 +415,51 @@ mod tests {
             joined.contains("ssh magnum@pc-escritorio.tail1234.ts.net")
                 || args.ends_with(&["ssh".into(), "magnum@pc-escritorio.tail1234.ts.net".into()])
         );
+    }
+
+    #[test]
+    fn screen_command_per_os_pair() {
+        let rdp = screen_command("macos", "windows", "pc-recepcao.tail1234.ts.net", "ana").unwrap();
+        match rdp {
+            Screen::RdpFile { name, contents } => {
+                assert_eq!(name, "twinfolders-pc-recepcao.rdp");
+                assert!(contents.starts_with("full address:s:pc-recepcao.tail1234.ts.net\r\n"));
+                assert!(contents.contains("username:s:ana\r\n"));
+                assert!(contents.contains("authentication level:i:2"));
+            }
+            other => panic!("{other:?}"),
+        }
+        assert_eq!(
+            screen_command("windows", "windows", "100.64.0.5", "ana").unwrap(),
+            Screen::Command {
+                program: "mstsc".into(),
+                args: vec!["/v:100.64.0.5".into()]
+            }
+        );
+        assert_eq!(
+            screen_command("macos", "macOS", "mac-ana.tail1234.ts.net", "ana").unwrap(),
+            Screen::Command {
+                program: "open".into(),
+                args: vec!["vnc://ana@mac-ana.tail1234.ts.net".into()]
+            }
+        );
+        assert!(screen_command("windows", "macOS", "h", "u").is_err());
+        assert!(screen_command("macos", "", "h", "u").is_err());
+    }
+
+    #[test]
+    fn screen_command_refuses_injection_into_the_rdp_file() {
+        // A newline in host or user would add lines to the .rdp file
+        // (e.g. a program to run on connect): both are refused.
+        assert!(screen_command("macos", "windows", "pc\r\nalternate shell:s:cmd", "ana").is_err());
+        assert!(screen_command(
+            "macos",
+            "windows",
+            "pc",
+            "ana\nremoteapplicationprogram:s:x"
+        )
+        .is_err());
+        assert!(screen_command("windows", "windows", "-h", "ana").is_err());
     }
 
     #[test]

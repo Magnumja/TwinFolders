@@ -559,6 +559,70 @@ async fn open_terminal(
     .await
 }
 
+/// Shows the other computer's screen: Remote Desktop to a Windows PC
+/// (Windows App on the Mac, mstsc on Windows), Screen Sharing to a Mac.
+/// Host, user and OS come from the tailnet and saved settings, never from
+/// the UI; everything is validated before reaching a file or command.
+#[tauri::command]
+async fn open_screen(
+    state: State<'_, Arc<AppState>>,
+    app: AppHandle,
+    device_id: String,
+) -> Result<(), String> {
+    let cache = app.path().app_cache_dir().map_err(|e| e.to_string())?;
+    let st = state.inner().clone();
+    with_client(state.inner(), move |c| {
+        let access = remote_access(c, &app)?;
+        if let Some(p) = access.problem {
+            return Err(p);
+        }
+        let m = access
+            .machines
+            .into_iter()
+            .find(|m| m.device_id == device_id)
+            .ok_or("computador não encontrado")?;
+        let host = m.host.ok_or_else(|| {
+            format!("{} não aparece no seu Tailscale. Instale e entre com a mesma conta nos dois.", m.name)
+        })?;
+        let (prog, args) = match tailscale::screen_command(std::env::consts::OS, &m.os, &host, &m.user)? {
+            tailscale::Screen::Command { program, args } => (program, args),
+            tailscale::Screen::RdpFile { name, contents } => {
+                std::fs::create_dir_all(&cache).map_err(|e| e.to_string())?;
+                let path = cache.join(name);
+                let mut opts = std::fs::OpenOptions::new();
+                opts.write(true).create(true).truncate(true);
+                #[cfg(unix)]
+                {
+                    use std::os::unix::fs::OpenOptionsExt;
+                    opts.mode(0o600);
+                }
+                use std::io::Write;
+                opts.open(&path)
+                    .and_then(|mut f| f.write_all(contents.as_bytes()))
+                    .map_err(|e| e.to_string())?;
+                ("open".to_string(), vec![path.to_string_lossy().into_owned()])
+            }
+        };
+        let mut child = std::process::Command::new(&prog)
+            .args(&args)
+            .spawn()
+            .map_err(|e| format!("não foi possível abrir a tela remota: {e}"))?;
+        let wait = std::thread::spawn(move || child.wait());
+        // `open` on a .rdp without the Windows App installed fails fast:
+        // explain where to get it instead of failing silently.
+        if prog == "open" && args.iter().any(|a| a.ends_with(".rdp")) {
+            if let Ok(Ok(status)) = wait.join() {
+                if !status.success() {
+                    return Err("instale o app Windows App (da Microsoft, grátis na App Store) para ver a tela de um PC Windows".into());
+                }
+            }
+        }
+        st.audit("Tela remota aberta", &m.name);
+        Ok(())
+    })
+    .await
+}
+
 /// Adds the other computer by its ID (as pasted) and optional address.
 /// The other side then gets a pairing request to approve. Returns the
 /// canonical ID.
@@ -1385,6 +1449,7 @@ fn main() {
             get_remote_access,
             set_ssh_user,
             open_terminal,
+            open_screen,
             approve_device,
             add_device,
             scan_folder,

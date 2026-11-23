@@ -78,7 +78,9 @@ jobs:
         run: |
           bash -n scripts/ssh-setup-mac.sh
           if [ "$RUNNER_OS" = "Windows" ]; then
-            powershell -NoProfile -Command '$e=$null; [void][System.Management.Automation.Language.Parser]::ParseFile("scripts/ssh-setup-windows.ps1",[ref]$null,[ref]$e); if ($e.Count) { $e | ForEach-Object { Write-Error $_.Message }; exit 1 } else { "ssh-setup-windows.ps1: OK" }'
+            for f in scripts/ssh-setup-windows.ps1 scripts/remote-desktop-windows.ps1; do
+              powershell -NoProfile -Command "\$e=\$null; [void][System.Management.Automation.Language.Parser]::ParseFile('$f',[ref]\$null,[ref]\$e); if (\$e.Count) { \$e | ForEach-Object { Write-Error \$_.Message }; exit 1 } else { '$f: OK' }"
+            done
           fi
 
   # Known vulnerabilities, licenses and sources of every Rust dependency

@@ -1,4 +1,4 @@
-# TwinFolders — prepara este PC Windows para o acesso por SSH com o outro computador.
+﻿# TwinFolders — prepara este PC Windows para o acesso por SSH com o outro computador.
 #
 # Abra o PowerShell COMO ADMINISTRADOR (botão direito → Executar como administrador):
 #   powershell -ExecutionPolicy Bypass -File .\scripts\ssh-setup-windows.ps1

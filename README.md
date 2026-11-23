@@ -137,6 +137,10 @@ O TwinFolders também funciona com mais de dois computadores. Por exemplo, o Mac
 5. Em **Atividade**, veja quem mudou o quê e quando nas pastas sincronizadas (filtre por computador, pasta e período) e, na outra aba, o que foi feito pelo app neste computador. Só as pastas sincronizadas aparecem: o resto de cada computador nunca é visto.
 6. Em **Preferências → Segurança deste computador**, confira o disco criptografado (FileVault/BitLocker) e o resto da lista em cada computador do time.
 
+7. No menu **⋯** de cada computador, **Ver a tela** abre a Área de Trabalho Remota de um PC Windows (precisa de Windows Pro com `scripts\remote-desktop-windows.ps1` rodado nele, e do app Windows App no Mac) ou o Compartilhamento de Tela de um Mac.
+
+Roteiro completo para instalar num escritório, com checklist e modelo de aviso ao time (LGPD): [docs/implantacao-escritorio.md](docs/implantacao-escritorio.md).
+
 Para que só a central alcance os computadores do time (e eles não se enxerguem), use as regras prontas de [docs/tailscale-escritorio.md](docs/tailscale-escritorio.md).
 
 Para computadores fora da mesma rede, use o Tailscale. Máquinas da empresa marcadas com uma etiqueta (por exemplo `tag:escritorio`) são reconhecidas como da sua rede.

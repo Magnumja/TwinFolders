@@ -102,7 +102,12 @@ Cenário: uma central (Mac da administradora) e vários PCs Windows do time; o u
 | ✅ 10.4 | **Segurança deste computador** (Preferências): FileVault/BitLocker (lido sem admin: `fdesetup status`; propriedade de volume do Windows), painel do Syncthing só local, painel com senha e HTTPS, Tailscale. Cada item diz o que fazer; o que não dá para ler aparece como "?" em vez de chute | unit; FileVault lido de verdade aqui ("On"); `docs/screenshot-security.jpg` |
 | ✅ 10.5 | Modelo de regras do Tailscale para o escritório (`docs/tailscale-escritorio.md`): `tag:escritorio`, a central alcança o time (sync, SSH, RDP), o time só alcança a central na sincronização, notebooks não se enxergam, com `tests` que o Tailscale confere ao salvar; passo a passo para computador perdido | revisão. Aplicar numa rede real 🖐 |
 
-Próximas (plano de 2026-11-22): 11 acesso remoto à tela (RDP no Windows Pro) e implantação na cliente.
+## Fatia 11 — Ver a tela e implantação
+| # | Tarefa | Evidência |
+|---|---|---|
+| ✅ 11.1 | **Ver a tela** no menu ⋯ de cada computador (`tailscale::screen_command`): Mac→Windows gera um `.rdp` (só do dono, no cache do app; NLA e aviso de identidade do servidor) aberto no Windows App; Windows→Windows `mstsc /v:host`; Mac→Mac `vnc://` (Compartilhamento de Tela); Windows→Mac explica que precisa de um cliente VNC. Host, usuário e sistema vêm do Tailscale e das configurações, validados (nada de quebra de linha que injete linhas no `.rdp`); fica no registro de ações | 3 unit (cada par de sistemas, injeção no `.rdp` recusada, host começando com `-`) |
+| ✅ 11.2 | `scripts/remote-desktop-windows.ps1`: recusa Windows Home; firewall só Tailscale na 3389 (regras padrão desligadas), NLA, e só então liga; erro desliga tudo; `-Undo`. Scripts PowerShell salvos com BOM (o PowerShell 5.1 lê sem BOM como ANSI e estragaria os acentos e o nome do grupo do firewall) | sintaxe no CI (Windows). Rodar num Windows Pro real 🖐 |
+| ✅ 11.3 | `docs/implantacao-escritorio.md`: antes de ir (edições do Windows, conta Tailscale, pastas, aviso ao time), central, cada PC, fechar a rede, conferir na frente da cliente, voltar atrás; modelo de aviso ao time (LGPD) com o que é e o que não é visto | revisão. Implantação real 🖐 |
 
 ## Paralelismo previsto
 - 0.2 e 1.2/1.3/1.4 em agentes paralelos (lógica pura, independentes).

@@ -122,6 +122,14 @@ Valores de referência: tarefa `\TwinFolders\Syncthing` (gatilho: logon do usuá
 - ☐ Preferências → Segurança: o item do disco bate com o estado real do FileVault/BitLocker; com o serviço desligado, os itens do painel ficam como "?".
 - ☐ Regras do Tailscale de docs/tailscale-escritorio.md: um notebook do time não alcança outro (`tailscale ping`), mas alcança a central.
 
+## Ver a tela (Fatia 11) — NÃO VERIFICADO
+
+- ☐ Windows Pro: `remote-desktop-windows.ps1` como administrador termina em "Pronto"; no Windows Home, recusa com a mensagem certa.
+- ☐ Central (Mac com Windows App): ⋯ → Ver a tela abre a sessão pedindo a senha; sem o Windows App, aparece a mensagem para instalá-lo.
+- ☐ De fora do Tailscale (outra rede, sem Tailscale), a porta 3389 do PC não responde.
+- ☐ `remote-desktop-windows.ps1 -Undo` desliga e Ver a tela passa a falhar.
+- ☐ "Tela remota aberta" aparece em Atividade → Ações neste computador.
+
 ## 7. Resultados
 
 | Passo | Resultado | Observações |
